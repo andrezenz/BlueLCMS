@@ -1,4 +1,4 @@
-# BlueLCMS
+# ⌊Blue⌋ LCMS
 
 Standalone LC-MS analysis desktop application, with a Qt-independent analysis
 module for future integration with SynthesisMapper.
@@ -28,7 +28,7 @@ Run the executable installer from this checkout:
 It creates `.venv` if necessary, installs the current project and dependencies,
 and writes `bluelcms.desktop` into
 `${XDG_DATA_HOME:-~/.local/share}/applications`. No administrator privileges
-are needed. Open **BlueLCMS** from your desktop's application menu afterward.
+are needed. Open **⌊Blue⌋ LCMS** from your desktop's application menu afterward.
 
 The shortcut uses this checkout's `.venv` and imports directly from its `src`
 directory. Every launch uses the **currently checked-out local branch and its
@@ -86,8 +86,8 @@ vendor-specific external DAD files.
 ### AFP-mounted remote folders (Linux)
 
 1. Connect to `afp://server/share` in your system file manager and authenticate
-   there. Keep the share mounted while using BlueLCMS.
-2. In BlueLCMS, choose **Settings → Choose mounted remote folder…**. Open the
+   there. Keep the share mounted while using ⌊Blue⌋ LCMS.
+2. In ⌊Blue⌋ LCMS, choose **Settings → Choose mounted remote folder…**. Open the
    share (usually named `afp-volume:host=…,volume=…`) and select the directory
    containing the mzML files. The picker exposes the GVFS mount directory even
    when the native folder dialog does not show network locations.
@@ -96,24 +96,24 @@ vendor-specific external DAD files.
    **Settings → Refresh file list**. If the mount path changes, reselect it.
 
 This requires the desktop's AFP backend and GVFS FUSE bridge (on Ubuntu/Debian,
-typically `gvfs-backends` and `gvfs-fuse`). BlueLCMS locates shares through
+typically `gvfs-backends` and `gvfs-fuse`). ⌊Blue⌋ LCMS locates shares through
 `$XDG_RUNTIME_DIR/gvfs`, `/run/user/<uid>/gvfs`, or the legacy `~/.gvfs` path.
 Shares mounted at regular paths such as `/mnt` or `/media` work with the normal
-folder picker. BlueLCMS reads the mounted files directly and remembers the
-selected path; authentication is handled by the desktop, not BlueLCMS.
+folder picker. ⌊Blue⌋ LCMS reads the mounted files directly and remembers the
+selected path; authentication is handled by the desktop, not ⌊Blue⌋ LCMS.
 
 ### Debug terminal
 
-Use **Settings → Open debug terminal…** to start a separate BlueLCMS instance
+Use **Settings → Open debug terminal…** to start a separate ⌊Blue⌋ LCMS instance
 inside the system terminal. Python tracebacks and other standard output remain
 visible there after that instance exits. This is interactive diagnostics only;
-BlueLCMS does not write log files.
+⌊Blue⌋ LCMS does not write log files.
 
 ### AFP local cache
 
 Choose **Settings → Choose local cache folder…** to select a persistent local
 folder for AFP mzML caches. After an AFP-backed file has fully loaded,
-BlueLCMS copies it to that folder in the background. Later selections use the
+⌊Blue⌋ LCMS copies it to that folder in the background. Later selections use the
 local copy instead of reading the AFP share. A save icon and **Cached locally**
 tooltip identify cached entries in the sidebar. Cache entries use an atomic
 copy and include a hash of the full remote path, so equal filenames from
@@ -130,7 +130,7 @@ decoded. The title shows **(streaming)** until the full run is ready. The
 complete, sorted trace replaces the preview when loading finishes; the heatmap
 remains unavailable until that point.
 
-BlueLCMS first makes a lightweight DAD-only pass that skips MS binary-array
+⌊Blue⌋ LCMS first makes a lightweight DAD-only pass that skips MS binary-array
 decoding, then makes the full MS pass. Once the first pass establishes the full
 UV time range, an orange cursor advances through that range with the currently
 decoded MS1 scan.

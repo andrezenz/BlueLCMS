@@ -2,6 +2,7 @@ from bluelcms.folders import cached_path, copy_to_cache, is_afp_path, remote_mou
 from bluelcms.mzml import discover_files
 from bluelcms import settings
 from PySide6.QtCore import QSettings
+from install import desktop_entry
 
 
 def test_gvfs_afp_path_discovery_and_persistence(tmp_path, monkeypatch):
@@ -55,3 +56,9 @@ def test_cache_folder_setting(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     settings.set_cache_folder(tmp_path / "cache")
     assert settings.cache_folder() == tmp_path / "cache"
+
+
+def test_desktop_display_name_keeps_ascii_launcher_identifier(tmp_path):
+    entry = desktop_entry(tmp_path)
+    assert "Name=⌊Blue⌋ LCMS\n" in entry
+    assert "bluelcms.desktop" not in entry

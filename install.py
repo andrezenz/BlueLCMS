@@ -24,7 +24,7 @@ def desktop_entry(root: Path) -> str:
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Version=1.0\n"
-        "Name=BlueLCMS\n"
+        "Name=⌊Blue⌋ LCMS\n"
         "Comment=LC-MS and DAD viewer — current local checkout\n"
         f"Exec={python} {launcher}\n"
         "Icon=applications-science\n"
@@ -56,8 +56,8 @@ def main() -> int:
         print(f"Installation failed: {error}", file=sys.stderr)
         return 1
     print(f"Installed {target}")
-    print(f"BlueLCMS will run the current local code in {root}")
-    print("Open BlueLCMS from your application menu. Rerun this installer after moving the checkout or changing dependencies.")
+    print(f"⌊Blue⌋ LCMS will run the current local code in {root}")
+    print("Open ⌊Blue⌋ LCMS from your application menu. Rerun this installer after moving the checkout or changing dependencies.")
     return 0
 
 

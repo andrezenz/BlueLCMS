@@ -9,7 +9,7 @@ import sys
 def main() -> int:
     root = Path(__file__).resolve().parent
     result = subprocess.run([sys.executable, str(root / "launch.py")])
-    print(f"\nBlueLCMS exited with code {result.returncode}.")
+    print(f"\n⌊Blue⌋ LCMS exited with code {result.returncode}.")
     try:
         input("Press Enter to close this terminal…")
     except EOFError:

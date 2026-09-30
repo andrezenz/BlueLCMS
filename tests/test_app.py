@@ -24,6 +24,7 @@ def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
     window = MainWindow()
     window.show()
     try:
+        assert window.windowTitle() == "⌊Blue⌋ LCMS"
         settings.set_data_folder(tmp_path)
         assert settings.data_folder() == tmp_path
         window.folder = tmp_path

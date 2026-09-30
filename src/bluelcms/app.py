@@ -82,7 +82,7 @@ class LoadJob(Job):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("BlueLCMS")
+        self.setWindowTitle("⌊Blue⌋ LCMS")
         self.resize(1250, 850)
         self.folder = None
         self.runs, self.histograms, self.stream_uv, self.run_data = {}, {}, {}, None
@@ -382,4 +382,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.9"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.10"); window = MainWindow(); window.show(); return app.exec()
