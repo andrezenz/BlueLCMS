@@ -18,6 +18,12 @@ def pixel_buckets(x, y, minimum, maximum, pixels):
     return minimum + (bins + .5) * width, np.bincount(inverse, weights=y), width
 
 
+def positive_zoom_range(current_upper, zoom_in):
+    """Scale a non-negative intensity axis while retaining a physical zero."""
+    factor = .9 if zoom_in else 1 / .9
+    return 0, max(np.finfo(float).eps, current_upper * factor)
+
+
 class ResetViewBox(pg.ViewBox):
     reset_requested = Signal()
 
@@ -88,8 +94,9 @@ class MassViewBox(ResetViewBox):
 
     def wheelEvent(self, event, axis=None):
         event.accept()
-        factor = 0.9 if event.delta() > 0 else 1 / 0.9
-        self.scaleBy((1, factor), center=self.mapToView(event.pos()))
+        upper = max(0, self.viewRange()[1][1])
+        lower, upper = positive_zoom_range(upper, event.delta() > 0)
+        self.setYRange(lower, upper, padding=0)
 
     def mouseDragEvent(self, event, axis=None):
         if event.button() != Qt.MouseButton.LeftButton:

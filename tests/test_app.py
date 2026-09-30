@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QListWidgetItem
 
 from bluelcms.app import MainWindow
 from bluelcms import settings
-from bluelcms.views import pixel_buckets
+from bluelcms.views import pixel_buckets, positive_zoom_range
 from test_mzml import write_mzml
 
 
@@ -107,6 +107,11 @@ def test_pixel_bucket_aggregation_preserves_hidden_mass_signal():
     np.testing.assert_allclose(x, [501.5, 504.5])
     np.testing.assert_equal(y, [10, 7])
     assert width == 3
+
+
+def test_histogram_intensity_zoom_keeps_zero_fixed():
+    assert positive_zoom_range(100, True) == (0, 90)
+    assert positive_zoom_range(90, False) == (0, 100)
 
 
 def test_cached_item_is_marked(tmp_path, monkeypatch):

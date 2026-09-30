@@ -68,7 +68,8 @@ updates the existing shortcut. To remove the shortcut, delete
   summed into that pixel's bar. Zooming back in restores the source resolution.
   The strongest non-overlapping visible peaks are labelled with their original
   0.1 Th bin m/z, never a screen-pixel average.
-- In mass plots, the wheel scales intensity only. Left-drag an m/z interval to
+- In mass plots, the wheel scales intensity only and keeps zero fixed at the
+  bottom of the y-axis. Left-drag an m/z interval to
   zoom both mass graphs to that range; double-click restores the full m/z view.
   Drag the shaded UV interval or its edge handles to recompute the mass plots.
 - While files, remote folders, or a new selection are being read, graphs are
