@@ -62,7 +62,7 @@ class MassPlot(pg.PlotWidget):
     changed = Signal()
 
     def __init__(self, title):
-        self.view = ResetViewBox()
+        self.view = MassViewBox()
         super().__init__(viewBox=self.view, title=title)
         self.setLabel("bottom", "m/z", units="Th")
         self.setLabel("left", "Summed intensity")
@@ -81,6 +81,26 @@ class MassPlot(pg.PlotWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.changed.emit()
+
+
+class MassViewBox(ResetViewBox):
+    """Wheel scales intensity only; left drag selects an m/z interval."""
+
+    def wheelEvent(self, event, axis=None):
+        event.accept()
+        factor = 0.9 if event.delta() > 0 else 1 / 0.9
+        self.scaleBy((1, factor), center=self.mapToView(event.pos()))
+
+    def mouseDragEvent(self, event, axis=None):
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDragEvent(event, axis)
+            return
+        event.accept()
+        if event.isFinish():
+            start = self.mapToView(event.buttonDownPos()).x()
+            end = self.mapToView(event.pos()).x()
+            if abs(end - start) > 1e-9:
+                self.setXRange(min(start, end), max(start, end), padding=0)
 
 
 def loading_overlay(plot, visible):

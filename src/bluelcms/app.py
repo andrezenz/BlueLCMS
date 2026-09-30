@@ -1,22 +1,33 @@
 """Standalone Qt desktop entry point."""
 
+import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
     QSpinBox, QStyle, QVBoxLayout, QWidget)
 
 from . import settings
-from .folders import cached_path, copy_to_cache, remote_mount_roots
+from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
 from .mzml import discover_files, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
+
+
+def downloading_icon():
+    style = QApplication.style()
+    canvas = QPixmap(24, 24); canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload).paint(painter, 0, 0, 18, 18)
+    style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown).paint(painter, 8, 8, 16, 16)
+    painter.end()
+    return QIcon(canvas)
 
 
 class JobSignals(QObject):
@@ -60,6 +71,7 @@ class MainWindow(QMainWindow):
         for text, slot in (("Choose mzML folder…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
                            ("Choose local cache folder…", self.choose_cache_folder),
+                           ("Open debug terminal…", self.open_debug_terminal),
                            ("Refresh file list", self.refresh_files)):
             action = QAction(text, self); action.triggered.connect(slot); menu.addAction(action)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
@@ -110,6 +122,15 @@ class MainWindow(QMainWindow):
             self.refresh_cache_indicators()
             self.statusBar().showMessage(f"AFP cache folder: {folder}")
 
+    def open_debug_terminal(self):
+        terminal = shutil.which("x-terminal-emulator")
+        if not terminal:
+            QMessageBox.warning(self, "No terminal found", "Install an x-terminal-emulator, then try again.")
+            return
+        root = Path(__file__).resolve().parents[2]
+        if not QProcess.startDetached(terminal, ["-e", sys.executable, str(root / "debug_launch.py")]):
+            QMessageBox.warning(self, "Debug terminal failed", "The system terminal could not be started.")
+
     def cache_for(self, source):
         return cached_path(source, settings.cache_folder())
 
@@ -119,6 +140,17 @@ class MainWindow(QMainWindow):
             item = self.files.item(index); cache = self.cache_for(item.data(Qt.ItemDataRole.UserRole))
             item.setIcon(icon if cache and cache.is_file() else QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
             item.setToolTip("Cached locally" if cache and cache.is_file() else "Remote source")
+
+    def set_download_state(self, path, active):
+        for index in range(self.files.count()):
+            item = self.files.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == path:
+                if active:
+                    item.setIcon(downloading_icon())
+                    item.setToolTip("Downloading remote source…")
+                else:
+                    self.refresh_cache_indicators()
+                return
 
     def refresh_files(self):
         if not self.folder: return
@@ -141,6 +173,7 @@ class MainWindow(QMainWindow):
         for path in missing:
             cache = self.cache_for(path)
             source = cache if cache and cache.is_file() else path
+            self.set_download_state(path, source == path and is_afp_path(path))
             size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
             self.statusBar().showMessage(f"Loading {path.name} ({size:.1f} MiB)…")
             self.submit(token, load_run, lambda t, r, e, p=path: self.loaded(t, p, r, e), source)
@@ -148,16 +181,25 @@ class MainWindow(QMainWindow):
 
     def loaded(self, token, path, run, error):
         if token != self.load_token: return
-        if error: self.statusBar().showMessage(f"Unable to load {path.name}: {error}"); return
+        if error:
+            self.set_download_state(path, False)
+            self.statusBar().showMessage(f"Unable to load {path.name}: {error}")
+            return
         self.runs[path] = run
         self.run_data = run
         cache = self.cache_for(path)
         if cache and not cache.is_file():
             self.submit_copy(token, path, cache)
+        else:
+            self.set_download_state(path, False)
         if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
 
     def cached(self, token, path, cache, error):
-        if token != self.load_token or error:
+        if token != self.load_token:
+            return
+        if error:
+            self.set_download_state(path, False)
+            self.statusBar().showMessage(f"Loaded {path.name}, but local caching failed: {error}")
             return
         self.refresh_cache_indicators()
         self.statusBar().showMessage(f"Cached {path.name} locally")
@@ -230,15 +272,22 @@ class MainWindow(QMainWindow):
 
     def label_peaks(self):
         for plot in (self.positive, self.negative):
-            bars = [item for item in plot.items() if isinstance(item, pg.BarGraphItem)]
-            peaks = sorted(((float(y), float(x)) for bar in bars for x, y in zip(bar.opts["x"], bar.opts["height"])), reverse=True)[:5]
+            low, high = plot.viewRange()[0]
+            candidates = []
+            for result in self.histograms.values():
+                x, y = result["+" if plot is self.positive else "-"]
+                candidates.extend((float(value), float(mass)) for mass, value in zip(x, y) if low <= mass <= high)
+            # Labels name actual source bins, never the screen-pixel aggregate.
+            peaks = sorted(candidates, reverse=True)[:20]
             used = []
             for value, x in peaks:
-                if all(abs(x - previous) > (plot.viewRange()[0][1] - plot.viewRange()[0][0]) / 12 for previous in used):
+                if len(used) == 5:
+                    break
+                if all(abs(x - previous) > (high - low) / 12 for previous in used):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event): self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.2"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.4"); window = MainWindow(); window.show(); return app.exec()

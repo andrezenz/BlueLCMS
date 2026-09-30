@@ -66,9 +66,11 @@ updates the existing shortcut. To remove the shortcut, delete
 - Positive and negative histograms are stacked and share their m/z navigation.
   When zoomed out, all 0.1 Th source bins that fall into one screen pixel are
   summed into that pixel's bar. Zooming back in restores the source resolution.
-  The strongest non-overlapping visible peaks are labelled.
-- Double-click a graph to reset its view. Drag the shaded UV interval or its
-  edge handles to recompute the mass plots.
+  The strongest non-overlapping visible peaks are labelled with their original
+  0.1 Th bin m/z, never a screen-pixel average.
+- In mass plots, the wheel scales intensity only. Left-drag an m/z interval to
+  zoom both mass graphs to that range; double-click restores the full m/z view.
+  Drag the shaded UV interval or its edge handles to recompute the mass plots.
 - While files, remote folders, or a new selection are being read, graphs are
   greyed out with an animated loading label. The chosen folder remains stored
   between sessions.
@@ -98,6 +100,13 @@ Shares mounted at regular paths such as `/mnt` or `/media` work with the normal
 folder picker. BlueLCMS reads the mounted files directly and remembers the
 selected path; authentication is handled by the desktop, not BlueLCMS.
 
+### Debug terminal
+
+Use **Settings → Open debug terminal…** to start a separate BlueLCMS instance
+inside the system terminal. Python tracebacks and other standard output remain
+visible there after that instance exits. This is interactive diagnostics only;
+BlueLCMS does not write log files.
+
 ### AFP local cache
 
 Choose **Settings → Choose local cache folder…** to select a persistent local
@@ -113,6 +122,13 @@ The graphs grey out with an animated loading label while a file is parsed.
 BlueLCMS shows the selected file's size while it is being read. After a remote
 parse succeeds, the status bar reports the byte-based percentage and MiB copied
 into the local cache.
+
+An uncached AFP entry shows a refresh-and-download icon and a **Downloading
+remote source…** tooltip while it is being parsed or copied. Changing the
+selection does not block the application: completed results from the old
+selection are ignored. The active parser cannot be forcibly interrupted, so a
+very slow abandoned remote read may still occupy one background worker until it
+finishes.
 
 ## Verification
 

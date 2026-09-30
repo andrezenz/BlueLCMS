@@ -128,5 +128,21 @@ def test_cached_item_is_marked(tmp_path, monkeypatch):
         cache.parent.mkdir(); cache.touch()
         window.refresh_cache_indicators()
         assert item.toolTip() == "Cached locally"
+        window.set_download_state(remote, True)
+        assert item.toolTip() == "Downloading remote source…"
+    finally:
+        window.close()
+
+
+def test_peak_labels_name_source_bins_not_pixel_bucket(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        window.histograms = {"run": {"+": (np.array([500.05, 501.05, 502.05]), np.array([2, 99, 3])), "-": (np.array([]), np.array([]))}}
+        window.positive.setXRange(500, 503, padding=0)
+        window.draw_histograms()
+        labels = [item.toPlainText() for item in window.positive.items() if isinstance(item, pg.TextItem)]
+        assert "501.05" in labels
     finally:
         window.close()
