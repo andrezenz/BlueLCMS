@@ -172,3 +172,22 @@ def test_byte_progress_and_loading_overlay_are_visible():
         assert window.uv.isEnabled()
     finally:
         window.close()
+
+
+def test_streamed_uv_points_draw_before_run_completion(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        path = tmp_path / "remote.mzML"
+        item = QListWidgetItem(path.name)
+        item.setData(Qt.ItemDataRole.UserRole, path)
+        window.files.addItem(item)
+        item.setSelected(True)
+        window.load_token = 9
+        window.stream_uv = {path: []}
+        window.streamed_uv(9, path, 1.5, 42, 254)
+        assert window.stream_uv[path] == [(1.5, 42, 254)]
+        assert "streaming" in window.uv.plotItem.titleLabel.text.lower()
+    finally:
+        window.close()

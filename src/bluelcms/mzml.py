@@ -88,7 +88,7 @@ def paired_arrays(record: dict, axis: str) -> tuple[np.ndarray, np.ndarray]:
     return x[valid], y[valid]
 
 
-def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
+def parse_spectra(spectra, wavelength: float = 254.0, dad_callback=None) -> Run:
     dad = []
     scans = []
     skipped = 0
@@ -100,7 +100,10 @@ def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
             axis, intensity = paired_arrays(spectrum, "wavelength array")
             # mzML wavelength arrays use nanometers (MS:1000617).
             if len(axis):
-                dad.append(DADScan(time, axis, intensity))
+                scan = DADScan(time, axis, intensity)
+                dad.append(scan)
+                if dad_callback:
+                    dad_callback(scan)
         elif int(spectrum.get("ms level", 0)) == 1:
             positive = "positive scan" in spectrum
             negative = "negative scan" in spectrum
@@ -129,16 +132,16 @@ class ProgressReader:
         return getattr(self.file, name)
 
 
-def load_run(path: Path, wavelength: float = 254.0, progress=None) -> Run:
+def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=None) -> Run:
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
     if progress is None:
         with MzML(str(path), use_index=False) as reader:
-            return parse_spectra(reader, wavelength)
+            return parse_spectra(reader, wavelength, dad_callback)
     with path.open("rb") as file:
         reader_source = ProgressReader(file, progress)
         with MzML(reader_source, use_index=False) as reader:
-            return parse_spectra(reader, wavelength)
+            return parse_spectra(reader, wavelength, dad_callback)
 
 
 def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):

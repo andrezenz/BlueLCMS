@@ -124,6 +124,11 @@ parsed. A persistent status-bar progress bar reports bytes read against the
 selected file's size. After a remote parse succeeds, it switches to byte-based
 progress for the copy into the local cache.
 
+For DAD-enabled mzML files, the UV trace appears progressively as spectra are
+decoded. The title shows **(streaming)** until the full run is ready. The
+complete, sorted trace replaces the preview when loading finishes; the heatmap
+remains unavailable until that point.
+
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the
 selection does not block the application: completed results from the old

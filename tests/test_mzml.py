@@ -95,9 +95,11 @@ def write_mzml(path):
 def test_real_mzml_decoding(tmp_path):
     path = write_mzml(tmp_path / "sample.mzML")
     progress = []
-    run = load_run(path, progress=lambda copied, total: progress.append((copied, total)))
+    dad = []
+    run = load_run(path, progress=lambda copied, total: progress.append((copied, total)), dad_callback=dad.append)
     np.testing.assert_equal(run.times, [1])
     np.testing.assert_equal(run.uv, [12])
     assert [s.polarity for s in run.scans] == ["+", "-"]
     assert all(s.time == 1 for s in run.scans)
     assert progress[-1] == (path.stat().st_size, path.stat().st_size)
+    assert [(scan.time, scan.wavelength.tolist()) for scan in dad] == [(1, [250.0, 254.0, 260.0])]
