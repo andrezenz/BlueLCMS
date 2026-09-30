@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
-from .mzml import discover_files, load_run, mass_histograms
+from .mzml import discover_files, file_display_name, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -107,6 +107,11 @@ class MainWindow(QMainWindow):
                            ("Open debug terminal…", self.open_debug_terminal),
                            ("Refresh file list", self.refresh_files)):
             action = QAction(text, self); action.triggered.connect(slot); menu.addAction(action)
+        self.show_date_prefix = QAction("Show date prefix in file list", self)
+        self.show_date_prefix.setCheckable(True)
+        self.show_date_prefix.setChecked(settings.show_date_prefix())
+        self.show_date_prefix.toggled.connect(self.set_show_date_prefix)
+        menu.addAction(self.show_date_prefix)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
         self.files.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.files.itemSelectionChanged.connect(self.select_files)
@@ -164,6 +169,12 @@ class MainWindow(QMainWindow):
             self.refresh_cache_indicators()
             self.statusBar().showMessage(f"AFP cache folder: {folder}")
 
+    def set_show_date_prefix(self, show):
+        settings.set_show_date_prefix(show)
+        for index in range(self.files.count()):
+            item = self.files.item(index)
+            item.setText(file_display_name(item.data(Qt.ItemDataRole.UserRole), show))
+
     def open_debug_terminal(self):
         terminal = shutil.which("x-terminal-emulator")
         if not terminal:
@@ -203,7 +214,7 @@ class MainWindow(QMainWindow):
         self.set_loading(False)
         if error: self.statusBar().showMessage(f"Cannot read folder: {error}. Reconnect remote shares, then refresh."); return
         for path in paths:
-            item = QListWidgetItem(path.name); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
+            item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         self.refresh_cache_indicators()
         self.statusBar().showMessage(f"{len(paths)} mzML files found. Select one or more files." if paths else "No mzML files found in this folder.")
 
@@ -374,4 +385,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.12"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.13"); window = MainWindow(); window.show(); return app.exec()

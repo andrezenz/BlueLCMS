@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import numpy as np
 from pyteomics.mzml import MzML
@@ -58,11 +59,21 @@ class Run:
         return times, wavelengths, values
 
 
+DATE_PREFIX = re.compile(r"^(\d{4}_\d{2}_\d{2})_?")
+
+
+def file_display_name(path: Path, show_date_prefix: bool) -> str:
+    return path.name if show_date_prefix else DATE_PREFIX.sub("", path.name)
+
+
 def discover_files(folder: Path) -> list[Path]:
-    """List files directly in the selected directory, ignoring extension case."""
+    """List files newest-first when their names start with yyyy_mm_dd."""
+    def order(path):
+        match = DATE_PREFIX.match(path.name)
+        return (0, -int(match.group(1).replace("_", "")), path.name.casefold()) if match else (1, 0, path.name.casefold())
     return sorted(
         (p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".mzml"),
-        key=lambda p: (p.name.casefold(), p.name),
+        key=order,
     )
 
 

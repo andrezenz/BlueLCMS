@@ -25,3 +25,11 @@ def cache_folder() -> Path | None:
 
 def set_cache_folder(path: Path) -> None:
     settings().setValue("cache_folder", str(path.resolve()))
+
+
+def show_date_prefix() -> bool:
+    return settings().value("show_date_prefix", True, type=bool)
+
+
+def set_show_date_prefix(show: bool) -> None:
+    settings().setValue("show_date_prefix", show)

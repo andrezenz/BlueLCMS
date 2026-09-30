@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pyteomics.auxiliary import unitfloat
 
-from bluelcms.mzml import discover_files, load_run, mass_histograms, parse_spectra
+from bluelcms.mzml import discover_files, file_display_name, load_run, mass_histograms, parse_spectra
 
 
 def spectrum(time=1, polarity="positive scan", level=1, **arrays):
@@ -17,10 +17,13 @@ def spectrum(time=1, polarity="positive scan", level=1, **arrays):
 
 
 def test_discovery(tmp_path):
-    for name in ("z.mzML", "A.MZML", "ignore.txt"):
+    for name in ("2026_01_01_old.mzML", "2026_09_30_new.mzML", "z.mzML", "A.MZML", "ignore.txt"):
         (tmp_path / name).touch()
     (tmp_path / "directory.mzml").mkdir()
-    assert [p.name for p in discover_files(tmp_path)] == ["A.MZML", "z.mzML"]
+    paths = discover_files(tmp_path)
+    assert [p.name for p in paths] == ["2026_09_30_new.mzML", "2026_01_01_old.mzML", "A.MZML", "z.mzML"]
+    assert file_display_name(paths[0], False) == "new.mzML"
+    assert file_display_name(paths[0], True) == "2026_09_30_new.mzML"
 
 
 def test_dad_nearest_wavelength_and_sorting():

@@ -43,6 +43,9 @@ updates the existing shortcut. To remove the shortcut, delete
    sessions. Files directly in that folder appear in the sidebar; `.mzML`
    extensions are matched case-insensitively. Use **Refresh file list** after
    adding files.
+   Files beginning with `yyyy_mm_dd` sort newest first. Toggle **Settings →
+   Show date prefix in file list** to hide that prefix in sidebar labels without
+   renaming source files.
 2. Select a file to load it in the background. The upper plot extracts the
    nearest recorded wavelength to **254 nm** from full DAD spectra whose
    wavelength arrays cover that target. Its title reports the actual wavelength.

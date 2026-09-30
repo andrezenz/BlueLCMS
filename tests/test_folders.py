@@ -56,6 +56,9 @@ def test_cache_folder_setting(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     settings.set_cache_folder(tmp_path / "cache")
     assert settings.cache_folder() == tmp_path / "cache"
+    assert settings.show_date_prefix() is True
+    settings.set_show_date_prefix(False)
+    assert settings.show_date_prefix() is False
 
 
 def test_desktop_display_name_keeps_ascii_launcher_identifier(tmp_path):
