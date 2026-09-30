@@ -141,6 +141,10 @@ sluggish while it streams.
 encountered in the mzML stream, avoiding a second remote traversal before MS
 analysis begins.
 
+The same upper plot also shows a dashed MS1 total-ion-current trace on its
+right-hand axis as MS spectra are decoded. It provides useful loading feedback
+before DAD spectra become available without changing the UV signal scale.
+
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the
 selection does not block the application: completed results from the old

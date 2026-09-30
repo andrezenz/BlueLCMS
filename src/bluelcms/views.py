@@ -53,7 +53,14 @@ class UVPlot(pg.PlotWidget):
         super().__init__(viewBox=self.view)
         self.setLabel("bottom", "Retention time", units="min")
         self.setLabel("left", "UV signal")
+        self.showAxis("right")
+        self.setLabel("right", "MS TIC")
         self.showGrid(x=True, y=True, alpha=.2)
+        self.tic_view = pg.ViewBox()
+        self.plotItem.scene().addItem(self.tic_view)
+        self.getAxis("right").linkToView(self.tic_view)
+        self.tic_view.setXLink(self.getViewBox())
+        self.getViewBox().sigResized.connect(self.update_tic_view)
         self.trace = self.plot(pen=pg.mkPen("#48a9ef", width=2))
         self.region = pg.LinearRegionItem(brush=(72, 169, 239, 45), movable=False)
         for line in self.region.lines:
@@ -62,6 +69,10 @@ class UVPlot(pg.PlotWidget):
         self.region.hide()
         self.view.region_dragged.connect(lambda a, b: self.region.setRegion((min(a, b), max(a, b))))
         self.view.reset_requested.connect(self.enableAutoRange)
+
+    def update_tic_view(self):
+        self.tic_view.setGeometry(self.getViewBox().sceneBoundingRect())
+        self.tic_view.linkedViewChanged(self.getViewBox(), self.tic_view.XAxis)
 
 
 class MassPlot(pg.PlotWidget):

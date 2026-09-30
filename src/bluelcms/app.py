@@ -34,6 +34,7 @@ class JobSignals(QObject):
     done = Signal(int, object, str)
     progress = Signal(int, int, int)
     uv_points = Signal(int, object)
+    tic_points = Signal(int, object)
 
 
 class Job(QRunnable):
@@ -64,12 +65,16 @@ class LoadJob(Job):
 
     def run(self):
         points = []
+        tic = []
 
         def flush():
-            nonlocal points
+            nonlocal points, tic
             if points:
                 self.signals.uv_points.emit(self.token, points)
                 points = []
+            if tic:
+                self.signals.tic_points.emit(self.token, tic)
+                tic = []
 
         def stream(scan):
             if len(scan.wavelength) and scan.wavelength.min() <= self.wavelength <= scan.wavelength.max():
@@ -77,8 +82,12 @@ class LoadJob(Job):
                 points.append((scan.time, scan.intensity[index], scan.wavelength[index]))
                 if len(points) >= 64:
                     flush()
+        def stream_ms(scan):
+            tic.append((scan.time, float(scan.intensity.sum())))
+            if len(tic) >= 64:
+                flush()
         try:
-            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total), dad_callback=stream)
+            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total), dad_callback=stream, scan_callback=stream_ms)
             flush()
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
@@ -92,7 +101,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("⌊Blue⌋ LCMS")
         self.resize(1250, 850)
         self.folder = None
-        self.runs, self.histograms, self.stream_uv, self.run_data = {}, {}, {}, None
+        self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.load_token = self.region_token = self.folder_token = 0
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
@@ -146,6 +155,7 @@ class MainWindow(QMainWindow):
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
         job.signals.uv_points.connect(lambda t, points, p=path: self.streamed_uv_points(t, p, points))
+        job.signals.tic_points.connect(lambda t, points, p=path: self.streamed_tic_points(t, p, points))
         job.signals.done.connect(callback)
         job.signals.done.connect(lambda *_: self.jobs.discard(job))
         self.pool.start(job)
@@ -207,7 +217,7 @@ class MainWindow(QMainWindow):
 
     def refresh_files(self):
         if not self.folder: return
-        self.files.clear(); self.runs.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_label.setText(str(self.folder)); self.folder_token += 1; self.set_loading(True); self.submit(self.folder_token, discover_files, self.files_listed, self.folder)
+        self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_label.setText(str(self.folder)); self.folder_token += 1; self.set_loading(True); self.submit(self.folder_token, discover_files, self.files_listed, self.folder)
 
     def files_listed(self, token, paths, error):
         if token != self.folder_token: return
@@ -220,7 +230,7 @@ class MainWindow(QMainWindow):
 
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
-        self.load_token += 1; token = self.load_token; self.runs = {p: r for p, r in self.runs.items() if p in paths}; self.stream_uv = {p: [] for p in paths if p not in self.runs}; self.histograms.clear()
+        self.load_token += 1; token = self.load_token; self.runs = {p: r for p, r in self.runs.items() if p in paths}; self.stream_uv = {p: [] for p in paths if p not in self.runs}; self.stream_tic = {p: [] for p in paths if p not in self.runs}; self.histograms.clear()
         missing = [p for p in paths if p not in self.runs]
         if missing: self.set_loading(True)
         for path in missing:
@@ -242,6 +252,7 @@ class MainWindow(QMainWindow):
             return
         self.runs[path] = run
         self.stream_uv.pop(path, None)
+        self.stream_tic.pop(path, None)
         self.run_data = run
         cache = self.cache_for(path)
         if cache and not cache.is_file():
@@ -256,6 +267,13 @@ class MainWindow(QMainWindow):
         if token != self.load_token or path not in self.stream_uv:
             return
         self.stream_uv[path].extend(points)
+        if not self.stream_timer.isActive():
+            self.stream_timer.start()
+
+    def streamed_tic_points(self, token, path, points):
+        if token != self.load_token or path not in self.stream_tic:
+            return
+        self.stream_tic[path].extend(points)
         if not self.stream_timer.isActive():
             self.stream_timer.start()
 
@@ -304,6 +322,7 @@ class MainWindow(QMainWindow):
     def draw_uv(self):
         loading = self.loading_timer.isActive()
         self.uv.clear(); self.uv.addItem(self.uv.region); self.uv.region.hide()
+        self.uv.tic_view.clear()
         if loading:
             loading_overlay(self.uv, True)
         if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
@@ -321,12 +340,17 @@ class MainWindow(QMainWindow):
         for index, path in enumerate(selected):
             if path in self.runs:
                 times, signal, used = self.runs[path].uv_trace(target)
+                tic = [(scan.time, float(scan.intensity.sum())) for scan in self.runs[path].scans]
             else:
                 values = np.asarray(self.stream_uv.get(path, []), dtype=float).reshape(-1, 3)
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
+                tic = self.stream_tic.get(path, [])
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=path.name); all_times.extend(times)
-        suffix = " (streaming)" if self.stream_uv else ""
-        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD — target {target} nm{suffix}; drag to select time")
+            if tic:
+                values = np.asarray(tic, dtype=float).reshape(-1, 2)
+                self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(COLORS[index % len(COLORS)], width=1, style=Qt.PenStyle.DashLine)))
+        suffix = " (streaming)" if self.stream_uv or self.stream_tic else ""
+        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD + MS TIC — target {target} nm{suffix}; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times)); self.uv.region.setBounds(bounds); self.uv.region.setRegion(bounds); self.uv.region.show(); self.uv.enableAutoRange()
         if loading:
@@ -385,4 +409,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.13"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.14"); window = MainWindow(); window.show(); return app.exec()
