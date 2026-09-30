@@ -50,11 +50,28 @@ updates the existing shortcut. To remove the shortcut, delete
    scale. An unavailable message appears if usable DAD spectra are absent.
 3. Left-drag across the upper plot to select a time interval, or resize
    the shaded region using its edge handles. Initially the full UV time interval is selected.
-4. The lower plots show positive ions on the left and negative ions on the
-   right. Each bar sums measured MS1 intensities in a **0.1 Th m/z bin** across
+4. The lower plots show positive ions above negative ions. Each bar sums measured MS1 intensities in a **0.1 Th m/z bin** across
    scans in the inclusive selected interval. These are m/z distributions,
    not neutral-mass deconvolutions. MS2+ spectra and scans lacking polarity or
    usable time metadata are excluded. Missing polarity data is never guessed.
+
+## Display Controls
+
+- Select multiple files in the sidebar with Ctrl-click or Shift-click to overlay
+  their UV traces. The matching MS1 contributions use the same color in the
+  mass plots.
+- Change **Wavelength** to redraw all selected DAD traces without rereading the
+  source files. Choose **DAD heatmap** to view wavelength versus retention time
+  for the first selected run.
+- Positive and negative histograms are stacked and share their m/z navigation.
+  When zoomed out, all 0.1 Th source bins that fall into one screen pixel are
+  summed into that pixel's bar. Zooming back in restores the source resolution.
+  The strongest non-overlapping visible peaks are labelled.
+- Double-click a graph to reset its view. Drag the shaded UV interval or its
+  edge handles to recompute the mass plots.
+- While files, remote folders, or a new selection are being read, graphs are
+  greyed out with an animated loading label. The chosen folder remains stored
+  between sessions.
 
 The active file's decoded MS1 arrays are held in memory to support repeated
 selection. Loading and histogram computation run in background workers.

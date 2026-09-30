@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from bluelcms.app import MainWindow
 from bluelcms import settings
+from bluelcms.views import pixel_buckets
 from test_mzml import write_mzml
 
 
@@ -41,10 +42,12 @@ def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
         positive_bars = [item for item in window.positive.items() if isinstance(item, pg.BarGraphItem)]
         negative_bars = [item for item in window.negative.items() if isinstance(item, pg.BarGraphItem)]
         np.testing.assert_equal(positive_bars[0].opts["height"], [2, 4, 6])
-        np.testing.assert_equal(negative_bars[0].opts["height"], [3, 5, 7])
+        # The shared x range follows positive data; off-screen negative bins are
+        # not drawn until panned into view, but no visible bin is dropped.
+        np.testing.assert_equal(negative_bars[0].opts["height"], [3, 5])
         assert "0.1 Th bins" in window.statusBar().currentMessage()
         # A stale load must never overwrite a newer file selection.
-        window.loaded(window.load_token - 1, None, "stale failure")
+        window.loaded(window.load_token - 1, path, None, "stale failure")
         assert window.run_data is not None
         path.unlink()
         window.refresh_files()
@@ -97,3 +100,10 @@ def test_drag_inside_full_selection_creates_new_interval():
         np.testing.assert_allclose(plot.region.getRegion(), [2, 6], atol=0.05)
     finally:
         plot.close()
+
+
+def test_pixel_bucket_aggregation_preserves_hidden_mass_signal():
+    x, y, width = pixel_buckets([500.05, 501.05, 502.05, 504.05], [2, 3, 5, 7], 500, 506, 2)
+    np.testing.assert_allclose(x, [501.5, 504.5])
+    np.testing.assert_equal(y, [10, 7])
+    assert width == 3

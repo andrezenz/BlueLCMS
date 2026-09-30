@@ -32,6 +32,14 @@ def test_dad_nearest_wavelength_and_sorting():
     np.testing.assert_equal(run.times, [1, 2])
     np.testing.assert_equal(run.uv, [-2, 3])
     np.testing.assert_equal(run.wavelengths, [254, 253.5])
+    times, signal, used = run.uv_trace(260)
+    np.testing.assert_equal(times, [1, 2])
+    np.testing.assert_equal(signal, [7, 7])
+    np.testing.assert_equal(used, [260, 260])
+    heat_times, heat_wavelengths, heat_values = run.heatmap()
+    np.testing.assert_equal(heat_times, [1, 2, 3])
+    np.testing.assert_equal(heat_wavelengths, [250, 253.5, 254, 260, 300, 310])
+    assert heat_values.shape == (3, 6)
 
 
 def test_ms1_polarity_inclusive_interval_and_weights():

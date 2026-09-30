@@ -16,12 +16,46 @@ class Scan:
 
 
 @dataclass(frozen=True)
+class DADScan:
+    time: float
+    wavelength: np.ndarray
+    intensity: np.ndarray
+
+
+@dataclass(frozen=True)
 class Run:
-    times: np.ndarray
-    uv: np.ndarray
-    wavelengths: np.ndarray
+    dad: tuple[DADScan, ...]
     scans: tuple[Scan, ...]
     skipped_scans: int = 0
+
+    @property
+    def times(self):
+        return self.uv_trace(254)[0]
+
+    @property
+    def uv(self):
+        return self.uv_trace(254)[1]
+
+    @property
+    def wavelengths(self):
+        return self.uv_trace(254)[2]
+
+    def uv_trace(self, target: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        points = []
+        for scan in self.dad:
+            if len(scan.wavelength) and scan.wavelength.min() <= target <= scan.wavelength.max():
+                index = int(np.argmin(np.abs(scan.wavelength - target)))
+                points.append((scan.time, scan.intensity[index], scan.wavelength[index]))
+        values = np.asarray(sorted(points), dtype=float).reshape(-1, 3)
+        return values[:, 0], values[:, 1], values[:, 2]
+
+    def heatmap(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self.dad:
+            return np.array([]), np.array([]), np.empty((0, 0))
+        times = np.asarray([scan.time for scan in self.dad])
+        wavelengths = np.unique(np.concatenate([scan.wavelength for scan in self.dad]))
+        values = np.vstack([np.interp(wavelengths, scan.wavelength, scan.intensity) for scan in self.dad])
+        return times, wavelengths, values
 
 
 def discover_files(folder: Path) -> list[Path]:
@@ -55,7 +89,7 @@ def paired_arrays(record: dict, axis: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
-    uv_points = []
+    dad = []
     scans = []
     skipped = 0
     for spectrum in spectra:
@@ -65,9 +99,8 @@ def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
                 continue
             axis, intensity = paired_arrays(spectrum, "wavelength array")
             # mzML wavelength arrays use nanometers (MS:1000617).
-            if len(axis) and axis.min() <= wavelength <= axis.max():
-                index = int(np.argmin(np.abs(axis - wavelength)))
-                uv_points.append((time, intensity[index], axis[index]))
+            if len(axis):
+                dad.append(DADScan(time, axis, intensity))
         elif int(spectrum.get("ms level", 0)) == 1:
             positive = "positive scan" in spectrum
             negative = "negative scan" in spectrum
@@ -77,9 +110,8 @@ def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
             mz, intensity = paired_arrays(spectrum, "m/z array")
             valid = (mz > 0) & (intensity >= 0)
             scans.append(Scan(time, "+" if positive else "-", mz[valid], intensity[valid]))
-    uv_points.sort(key=lambda point: point[0])
-    values = np.asarray(uv_points, dtype=float).reshape(-1, 3)
-    return Run(values[:, 0], values[:, 1], values[:, 2], tuple(scans), skipped)
+    dad.sort(key=lambda scan: scan.time)
+    return Run(tuple(dad), tuple(scans), skipped)
 
 
 def load_run(path: Path, wavelength: float = 254.0) -> Run:
