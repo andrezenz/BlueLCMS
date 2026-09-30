@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QT
 from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
-    QSpinBox, QStyle, QVBoxLayout, QWidget)
+    QProgressBar, QSpinBox, QStyle, QVBoxLayout, QWidget)
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
@@ -56,6 +56,16 @@ class CopyJob(Job):
             self.signals.done.emit(self.token, result, "")
 
 
+class LoadJob(Job):
+    def run(self):
+        try:
+            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total))
+        except Exception as error:
+            self.signals.done.emit(self.token, None, str(error))
+        else:
+            self.signals.done.emit(self.token, result, "")
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -67,6 +77,8 @@ class MainWindow(QMainWindow):
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
+        self.progress = QProgressBar(); self.progress.setFixedWidth(260); self.progress.setTextVisible(True); self.progress.hide()
+        self.statusBar().addPermanentWidget(self.progress)
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Choose mzML folder…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
@@ -100,6 +112,14 @@ class MainWindow(QMainWindow):
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=source: self.cache_progress(t, p, copied, total))
         job.signals.done.connect(lambda t, result, error, p=source: self.cached(t, p, result, error))
+        job.signals.done.connect(lambda *_: self.jobs.discard(job))
+        self.pool.start(job)
+
+    def submit_load(self, token, source, callback):
+        job = LoadJob(token, load_run, source)
+        self.jobs.add(job)
+        job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
+        job.signals.done.connect(callback)
         job.signals.done.connect(lambda *_: self.jobs.discard(job))
         self.pool.start(job)
 
@@ -176,13 +196,15 @@ class MainWindow(QMainWindow):
             self.set_download_state(path, source == path and is_afp_path(path))
             size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
             self.statusBar().showMessage(f"Loading {path.name} ({size:.1f} MiB)…")
-            self.submit(token, load_run, lambda t, r, e, p=path: self.loaded(t, p, r, e), source)
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {path.name}…"); self.progress.show()
+            self.submit_load(token, source, lambda t, r, e, p=path: self.loaded(t, p, r, e))
         self.draw_uv(); self.timer.start()
 
     def loaded(self, token, path, run, error):
         if token != self.load_token: return
         if error:
             self.set_download_state(path, False)
+            self.progress.hide()
             self.statusBar().showMessage(f"Unable to load {path.name}: {error}")
             return
         self.runs[path] = run
@@ -192,23 +214,40 @@ class MainWindow(QMainWindow):
             self.submit_copy(token, path, cache)
         else:
             self.set_download_state(path, False)
+            self.progress.hide()
         if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
+
+    def load_progress(self, token, path, copied, total):
+        if token != self.load_token:
+            return
+        self.show_progress("Loading", path, copied, total)
 
     def cached(self, token, path, cache, error):
         if token != self.load_token:
             return
         if error:
             self.set_download_state(path, False)
+            self.progress.hide()
             self.statusBar().showMessage(f"Loaded {path.name}, but local caching failed: {error}")
             return
         self.refresh_cache_indicators()
+        self.progress.hide()
         self.statusBar().showMessage(f"Cached {path.name} locally")
 
     def cache_progress(self, token, path, copied, total):
         if token != self.load_token:
             return
-        percent = 100 if total == 0 else round(copied * 100 / total)
-        self.statusBar().showMessage(f"Caching {path.name}: {percent}% ({copied / 1048576:.1f} / {total / 1048576:.1f} MiB)")
+        self.show_progress("Caching", path, copied, total)
+
+    def show_progress(self, action, path, copied, total):
+        if total:
+            percent = round(copied * 100 / total)
+            self.progress.setRange(0, total); self.progress.setValue(copied)
+            self.progress.setFormat(f"{action} {percent}%")
+        else:
+            self.progress.setRange(0, 0); self.progress.setFormat(f"{action}…")
+        self.progress.show()
+        self.statusBar().showMessage(f"{action} {path.name}: {copied / 1048576:.1f} / {total / 1048576:.1f} MiB")
 
     def set_loading(self, visible):
         for plot in (self.uv, self.positive, self.negative): loading_overlay(plot, visible)
@@ -290,4 +329,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.5"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.6"); window = MainWindow(); window.show(); return app.exec()

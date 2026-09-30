@@ -114,11 +114,31 @@ def parse_spectra(spectra, wavelength: float = 254.0) -> Run:
     return Run(tuple(dad), tuple(scans), skipped)
 
 
-def load_run(path: Path, wavelength: float = 254.0) -> Run:
+class ProgressReader:
+    """File wrapper that reports streamed mzML input without retaining it."""
+    def __init__(self, file, progress):
+        self.file, self.progress, self.total = file, progress, file.seek(0, 2)
+        file.seek(0)
+
+    def read(self, size=-1):
+        data = self.file.read(size)
+        self.progress(self.file.tell(), self.total)
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
+def load_run(path: Path, wavelength: float = 254.0, progress=None) -> Run:
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
-    with MzML(str(path), use_index=False) as reader:
-        return parse_spectra(reader, wavelength)
+    if progress is None:
+        with MzML(str(path), use_index=False) as reader:
+            return parse_spectra(reader, wavelength)
+    with path.open("rb") as file:
+        reader_source = ProgressReader(file, progress)
+        with MzML(reader_source, use_index=False) as reader:
+            return parse_spectra(reader, wavelength)
 
 
 def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):

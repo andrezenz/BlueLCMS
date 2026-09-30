@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -149,5 +150,25 @@ def test_peak_labels_name_source_bins_not_pixel_bucket(tmp_path):
         window.draw_histograms()
         labels = [item.toPlainText() for item in window.positive.items() if isinstance(item, pg.TextItem)]
         assert "501.05" in labels
+    finally:
+        window.close()
+
+
+def test_byte_progress_and_loading_overlay_are_visible():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        window.load_token = 7
+        window.load_progress(7, Path(__file__), 50, 100)
+        app.processEvents()
+        assert window.progress.isVisible()
+        assert window.progress.value() == 50
+        assert window.progress.format() == "Loading 50%"
+        window.set_loading(True)
+        assert not window.uv.isEnabled()
+        assert "#6a6a6a" in window.uv.styleSheet()
+        window.set_loading(False)
+        assert window.uv.isEnabled()
     finally:
         window.close()

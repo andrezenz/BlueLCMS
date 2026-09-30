@@ -116,6 +116,7 @@ def loading_overlay(plot, visible):
         plot.loading.setZValue(100)
         plot.addItem(plot.loading)
     plot.setEnabled(not visible)
+    plot.setStyleSheet("background-color: #6a6a6a;" if visible else "")
     plot.loading.setVisible(visible)
     if visible:
         rect = plot.getViewBox().viewRect()
