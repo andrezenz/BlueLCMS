@@ -86,6 +86,7 @@ class MassPlot(pg.PlotWidget):
 def loading_overlay(plot, visible):
     if not hasattr(plot, "loading") or plot.loading.scene() is None:
         plot.loading = pg.TextItem("Loading…", color="#f0f0f0", anchor=(.5, .5))
+        plot.loading.setZValue(100)
         plot.addItem(plot.loading)
     plot.setEnabled(not visible)
     plot.loading.setVisible(visible)

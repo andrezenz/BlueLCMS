@@ -42,8 +42,10 @@ def test_afp_cache_has_unique_atomic_local_copy(tmp_path):
     assert is_afp_path(source)
     assert cache.parent == cache_root
     assert cache != cached_path(tmp_path / "gvfs" / "afp-volume:host=other,volume=LC" / "sample.mzML", cache_root)
-    assert copy_to_cache(source, cache) == cache
+    progress = []
+    assert copy_to_cache(source, cache, lambda copied, total: progress.append((copied, total))) == cache
     assert cache.read_bytes() == b"mzML data"
+    assert progress == [(len(b"mzML data"), len(b"mzML data"))]
     assert not list(cache_root.glob("*.part"))
     assert cached_path(tmp_path / "local.mzML", cache_root) is None
 

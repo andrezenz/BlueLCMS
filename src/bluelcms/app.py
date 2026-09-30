@@ -21,6 +21,7 @@ COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
 
 class JobSignals(QObject):
     done = Signal(int, object, str)
+    progress = Signal(int, int, int)
 
 
 class Job(QRunnable):
@@ -31,6 +32,17 @@ class Job(QRunnable):
     def run(self):
         try: self.signals.done.emit(self.token, self.function(*self.args), "")
         except Exception as error: self.signals.done.emit(self.token, None, str(error))
+
+
+class CopyJob(Job):
+    def run(self):
+        try:
+            result = copy_to_cache(self.args[0], self.args[1],
+                                   lambda copied, total: self.signals.progress.emit(self.token, copied, total))
+        except Exception as error:
+            self.signals.done.emit(self.token, None, str(error))
+        else:
+            self.signals.done.emit(self.token, result, "")
 
 
 class MainWindow(QMainWindow):
@@ -70,6 +82,14 @@ class MainWindow(QMainWindow):
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
+
+    def submit_copy(self, token, source, cache):
+        job = CopyJob(token, copy_to_cache, source, cache)
+        self.jobs.add(job)
+        job.signals.progress.connect(lambda t, copied, total, p=source: self.cache_progress(t, p, copied, total))
+        job.signals.done.connect(lambda t, result, error, p=source: self.cached(t, p, result, error))
+        job.signals.done.connect(lambda *_: self.jobs.discard(job))
+        self.pool.start(job)
 
     def choose_folder(self):
         if folder := QFileDialog.getExistingDirectory(self, "Choose mzML folder", str(self.folder or Path.home())):
@@ -121,6 +141,8 @@ class MainWindow(QMainWindow):
         for path in missing:
             cache = self.cache_for(path)
             source = cache if cache and cache.is_file() else path
+            size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
+            self.statusBar().showMessage(f"Loading {path.name} ({size:.1f} MiB)…")
             self.submit(token, load_run, lambda t, r, e, p=path: self.loaded(t, p, r, e), source)
         self.draw_uv(); self.timer.start()
 
@@ -131,7 +153,7 @@ class MainWindow(QMainWindow):
         self.run_data = run
         cache = self.cache_for(path)
         if cache and not cache.is_file():
-            self.submit(token, copy_to_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), path, cache)
+            self.submit_copy(token, path, cache)
         if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
 
     def cached(self, token, path, cache, error):
@@ -139,6 +161,12 @@ class MainWindow(QMainWindow):
             return
         self.refresh_cache_indicators()
         self.statusBar().showMessage(f"Cached {path.name} locally")
+
+    def cache_progress(self, token, path, copied, total):
+        if token != self.load_token:
+            return
+        percent = 100 if total == 0 else round(copied * 100 / total)
+        self.statusBar().showMessage(f"Caching {path.name}: {percent}% ({copied / 1048576:.1f} / {total / 1048576:.1f} MiB)")
 
     def set_loading(self, visible):
         for plot in (self.uv, self.positive, self.negative): loading_overlay(plot, visible)
@@ -151,7 +179,10 @@ class MainWindow(QMainWindow):
             if hasattr(plot, "loading") and plot.loading.isVisible(): plot.loading.setText("Loading" + "." * self.loading_phase)
 
     def draw_uv(self):
+        loading = self.loading_timer.isActive()
         self.uv.clear(); self.uv.addItem(self.uv.region); self.uv.region.hide()
+        if loading:
+            loading_overlay(self.uv, True)
         if not self.runs: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
         target = self.wavelength.value()
         if self.mode.currentText() == "DAD heatmap":
@@ -166,6 +197,8 @@ class MainWindow(QMainWindow):
         self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD — target {target} nm; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times)); self.uv.region.setBounds(bounds); self.uv.region.setRegion(bounds); self.uv.region.show(); self.uv.enableAutoRange()
+        if loading:
+            loading_overlay(self.uv, True)
 
     def calculate_region(self):
         if not self.runs or not self.uv.region.isVisible(): return
@@ -208,4 +241,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.1"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.2"); window = MainWindow(); window.show(); return app.exec()

@@ -109,6 +109,11 @@ copy and include a hash of the full remote path, so equal filenames from
 different shares cannot collide. Re-selecting the cache folder or deleting its
 file makes the next load use the remote source again.
 
+The graphs grey out with an animated loading label while a file is parsed.
+BlueLCMS shows the selected file's size while it is being read. After a remote
+parse succeeds, the status bar reports the byte-based percentage and MiB copied
+into the local cache.
+
 ## Verification
 
 ```sh

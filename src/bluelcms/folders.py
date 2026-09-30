@@ -3,7 +3,6 @@
 import os
 import hashlib
 from pathlib import Path
-import shutil
 
 
 def remote_mount_roots() -> list[Path]:
@@ -29,12 +28,19 @@ def cached_path(source: Path, cache_folder: Path | None) -> Path | None:
     return cache_folder / f"{source.stem}-{identity}{source.suffix}"
 
 
-def copy_to_cache(source: Path, cache: Path) -> Path:
+def copy_to_cache(source: Path, cache: Path, progress=None) -> Path:
     """Copy a complete remote file atomically; incomplete copies are invisible."""
     cache.parent.mkdir(parents=True, exist_ok=True)
     temporary = cache.with_name(f".{cache.name}.part")
+    total = source.stat().st_size
+    copied = 0
     try:
-        shutil.copyfile(source, temporary)
+        with source.open("rb") as input_file, temporary.open("wb") as output_file:
+            while chunk := input_file.read(1024 * 1024):
+                output_file.write(chunk)
+                copied += len(chunk)
+                if progress:
+                    progress(copied, total)
         temporary.replace(cache)
     finally:
         temporary.unlink(missing_ok=True)
