@@ -1,4 +1,4 @@
-from bluelcms.folders import remote_mount_roots
+from bluelcms.folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
 from bluelcms.mzml import discover_files
 from bluelcms import settings
 from PySide6.QtCore import QSettings
@@ -31,3 +31,25 @@ def test_unmounted_and_legacy_gvfs(tmp_path, monkeypatch):
     legacy = tmp_path / ".gvfs"
     legacy.mkdir()
     assert remote_mount_roots() == [legacy]
+
+
+def test_afp_cache_has_unique_atomic_local_copy(tmp_path):
+    source = tmp_path / "gvfs" / "afp-volume:host=lab,volume=LC" / "sample.mzML"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"mzML data")
+    cache_root = tmp_path / "cache"
+    cache = cached_path(source, cache_root)
+    assert is_afp_path(source)
+    assert cache.parent == cache_root
+    assert cache != cached_path(tmp_path / "gvfs" / "afp-volume:host=other,volume=LC" / "sample.mzML", cache_root)
+    assert copy_to_cache(source, cache) == cache
+    assert cache.read_bytes() == b"mzML data"
+    assert not list(cache_root.glob("*.part"))
+    assert cached_path(tmp_path / "local.mzML", cache_root) is None
+
+
+def test_cache_folder_setting(tmp_path, monkeypatch):
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    settings.set_cache_folder(tmp_path / "cache")
+    assert settings.cache_folder() == tmp_path / "cache"

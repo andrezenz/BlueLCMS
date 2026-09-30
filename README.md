@@ -98,6 +98,17 @@ Shares mounted at regular paths such as `/mnt` or `/media` work with the normal
 folder picker. BlueLCMS reads the mounted files directly and remembers the
 selected path; authentication is handled by the desktop, not BlueLCMS.
 
+### AFP local cache
+
+Choose **Settings → Choose local cache folder…** to select a persistent local
+folder for AFP mzML caches. After an AFP-backed file has fully loaded,
+BlueLCMS copies it to that folder in the background. Later selections use the
+local copy instead of reading the AFP share. A save icon and **Cached locally**
+tooltip identify cached entries in the sidebar. Cache entries use an atomic
+copy and include a hash of the full remote path, so equal filenames from
+different shares cannot collide. Re-selecting the cache folder or deleting its
+file makes the next load use the remote source again.
+
 ## Verification
 
 ```sh

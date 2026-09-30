@@ -7,12 +7,12 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
-    QSpinBox, QVBoxLayout, QWidget)
+    QSpinBox, QStyle, QVBoxLayout, QWidget)
 
 from . import settings
-from .folders import remote_mount_roots
+from .folders import cached_path, copy_to_cache, remote_mount_roots
 from .mzml import discover_files, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Choose mzML folder…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
+                           ("Choose local cache folder…", self.choose_cache_folder),
                            ("Refresh file list", self.refresh_files)):
             action = QAction(text, self); action.triggered.connect(slot); menu.addAction(action)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
@@ -82,6 +83,23 @@ class MainWindow(QMainWindow):
         dialog = QFileDialog(self, "Choose a mounted remote folder"); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setSidebarUrls([QUrl.fromLocalFile(str(x)) for x in [Path.home(), *roots]]); dialog.setDirectory(str(roots[0]))
         if dialog.exec() and dialog.selectedFiles(): self.folder = Path(dialog.selectedFiles()[0]); settings.set_data_folder(self.folder); self.refresh_files()
 
+    def choose_cache_folder(self):
+        initial = settings.cache_folder() or Path.home()
+        if folder := QFileDialog.getExistingDirectory(self, "Choose local AFP mzML cache folder", str(initial)):
+            settings.set_cache_folder(Path(folder))
+            self.refresh_cache_indicators()
+            self.statusBar().showMessage(f"AFP cache folder: {folder}")
+
+    def cache_for(self, source):
+        return cached_path(source, settings.cache_folder())
+
+    def refresh_cache_indicators(self):
+        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)
+        for index in range(self.files.count()):
+            item = self.files.item(index); cache = self.cache_for(item.data(Qt.ItemDataRole.UserRole))
+            item.setIcon(icon if cache and cache.is_file() else QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+            item.setToolTip("Cached locally" if cache and cache.is_file() else "Remote source")
+
     def refresh_files(self):
         if not self.folder: return
         self.files.clear(); self.runs.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_label.setText(str(self.folder)); self.folder_token += 1; self.set_loading(True); self.submit(self.folder_token, discover_files, self.files_listed, self.folder)
@@ -92,6 +110,7 @@ class MainWindow(QMainWindow):
         if error: self.statusBar().showMessage(f"Cannot read folder: {error}. Reconnect remote shares, then refresh."); return
         for path in paths:
             item = QListWidgetItem(path.name); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
+        self.refresh_cache_indicators()
         self.statusBar().showMessage(f"{len(paths)} mzML files found. Select one or more files." if paths else "No mzML files found in this folder.")
 
     def select_files(self):
@@ -99,7 +118,10 @@ class MainWindow(QMainWindow):
         self.load_token += 1; token = self.load_token; self.runs = {p: r for p, r in self.runs.items() if p in paths}; self.histograms.clear()
         missing = [p for p in paths if p not in self.runs]
         if missing: self.set_loading(True)
-        for path in missing: self.submit(token, load_run, lambda t, r, e, p=path: self.loaded(t, p, r, e), path)
+        for path in missing:
+            cache = self.cache_for(path)
+            source = cache if cache and cache.is_file() else path
+            self.submit(token, load_run, lambda t, r, e, p=path: self.loaded(t, p, r, e), source)
         self.draw_uv(); self.timer.start()
 
     def loaded(self, token, path, run, error):
@@ -107,7 +129,16 @@ class MainWindow(QMainWindow):
         if error: self.statusBar().showMessage(f"Unable to load {path.name}: {error}"); return
         self.runs[path] = run
         self.run_data = run
+        cache = self.cache_for(path)
+        if cache and not cache.is_file():
+            self.submit(token, copy_to_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), path, cache)
         if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
+
+    def cached(self, token, path, cache, error):
+        if token != self.load_token or error:
+            return
+        self.refresh_cache_indicators()
+        self.statusBar().showMessage(f"Cached {path.name} locally")
 
     def set_loading(self, visible):
         for plot in (self.uv, self.positive, self.negative): loading_overlay(plot, visible)
@@ -177,4 +208,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.0"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.1"); window = MainWindow(); window.show(); return app.exec()

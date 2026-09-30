@@ -7,7 +7,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QListWidgetItem
 
 from bluelcms.app import MainWindow
 from bluelcms import settings
@@ -107,3 +107,26 @@ def test_pixel_bucket_aggregation_preserves_hidden_mass_signal():
     np.testing.assert_allclose(x, [501.5, 504.5])
     np.testing.assert_equal(y, [10, 7])
     assert width == 3
+
+
+def test_cached_item_is_marked(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    remote = tmp_path / "gvfs" / "afp-volume:host=lab,volume=LC" / "sample.mzML"
+    remote.parent.mkdir(parents=True)
+    remote.touch()
+    settings.set_cache_folder(tmp_path / "cache")
+    window = MainWindow()
+    try:
+        item = QListWidgetItem(remote.name)
+        item.setData(Qt.ItemDataRole.UserRole, remote)
+        window.files.addItem(item)
+        window.refresh_cache_indicators()
+        assert item.toolTip() == "Remote source"
+        cache = window.cache_for(remote)
+        cache.parent.mkdir(); cache.touch()
+        window.refresh_cache_indicators()
+        assert item.toolTip() == "Cached locally"
+    finally:
+        window.close()
