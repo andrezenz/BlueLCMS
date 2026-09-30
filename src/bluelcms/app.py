@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
-from .mzml import discover_files, load_dad_preview, load_run, mass_histograms
+from .mzml import discover_files, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -34,8 +34,6 @@ class JobSignals(QObject):
     done = Signal(int, object, str)
     progress = Signal(int, int, int)
     uv_points = Signal(int, object)
-    uv_preview_done = Signal(int)
-    ms_time = Signal(int, float)
 
 
 class Job(QRunnable):
@@ -80,10 +78,8 @@ class LoadJob(Job):
                 if len(points) >= 64:
                     flush()
         try:
-            load_dad_preview(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total * 2), callback=stream)
+            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total), dad_callback=stream)
             flush()
-            self.signals.uv_preview_done.emit(self.token)
-            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, total + copied, total * 2), scan_callback=lambda scan: self.signals.ms_time.emit(self.token, scan.time))
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
         else:
@@ -120,8 +116,6 @@ class MainWindow(QMainWindow):
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.draw_uv)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
-        self.loading_cursor = pg.InfiniteLine(angle=90, pen=pg.mkPen("#f3ae57", width=2))
-        self.loading_cursor.hide()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.draw_histograms); self.negative.changed.connect(self.draw_histograms)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
@@ -147,8 +141,6 @@ class MainWindow(QMainWindow):
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
         job.signals.uv_points.connect(lambda t, points, p=path: self.streamed_uv_points(t, p, points))
-        job.signals.uv_preview_done.connect(self.uv_preview_ready)
-        job.signals.ms_time.connect(self.streamed_ms_time)
         job.signals.done.connect(callback)
         job.signals.done.connect(lambda *_: self.jobs.discard(job))
         self.pool.start(job)
@@ -246,7 +238,7 @@ class MainWindow(QMainWindow):
         else:
             self.set_download_state(path, False)
             self.progress.hide()
-        if len(self.runs) == len(self.files.selectedItems()): self.loading_cursor.hide(); self.set_loading(False); self.draw_uv(); self.timer.start()
+        if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
 
     def streamed_uv_points(self, token, path, points):
         """Queue a compact live preview; expensive drawing runs at most 13 fps."""
@@ -255,20 +247,6 @@ class MainWindow(QMainWindow):
         self.stream_uv[path].extend(points)
         if not self.stream_timer.isActive():
             self.stream_timer.start()
-
-    def uv_preview_ready(self, token):
-        if token != self.load_token:
-            return
-        self.stream_timer.stop()
-        self.draw_uv()
-        if self.uv.region.isVisible():
-            self.uv.addItem(self.loading_cursor)
-            self.loading_cursor.setPos(self.uv.region.getRegion()[0])
-            self.loading_cursor.show()
-
-    def streamed_ms_time(self, token, time):
-        if token == self.load_token and self.loading_cursor.isVisible():
-            self.loading_cursor.setPos(time)
 
     def load_progress(self, token, path, copied, total):
         if token != self.load_token:
@@ -396,4 +374,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.11"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.12"); window = MainWindow(); window.show(); return app.exec()

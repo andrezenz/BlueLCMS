@@ -1,12 +1,9 @@
 """Qt-independent mzML loading and intensity-weighted MS1 aggregation."""
 
-import base64
 from dataclasses import dataclass
 from pathlib import Path
-import zlib
 
 import numpy as np
-from lxml import etree
 from pyteomics.mzml import MzML
 
 
@@ -150,54 +147,6 @@ def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=
             return parse_spectra(reader, wavelength, dad_callback, scan_callback)
 
 
-def _array(element, accessions):
-    names = {param.get("accession") for param in element.iterfind("{*}cvParam")}
-    if not names.intersection(accessions):
-        return None
-    binary = element.findtext("{*}binary")
-    if not binary:
-        return None
-    data = base64.b64decode(binary)
-    if "MS:1000574" in names:
-        data = zlib.decompress(data)
-    dtype = ">f8" if "MS:1000523" in names else ">f4" if "MS:1000521" in names else None
-    if dtype is None:
-        return None
-    if "MS:1000141" in names or "MS:1000140" not in names:
-        dtype = dtype.replace(">", "<")
-    return np.frombuffer(data, dtype=dtype).astype(float)
-
-
-def load_dad_preview(path: Path, progress=None, callback=None) -> tuple[DADScan, ...]:
-    """Decode only DAD arrays in a first streaming pass, skipping costly MS data."""
-    scans = []
-    with path.open("rb") as file:
-        reader = ProgressReader(file, progress or (lambda *_: None))
-        for _, spectrum in etree.iterparse(reader, events=("end",), tag="{*}spectrum"):
-            wavelength = intensity = None
-            for array in spectrum.iterfind(".//{*}binaryDataArray"):
-                wavelength = wavelength if wavelength is not None else _array(array, {"MS:1000617"})
-                intensity = intensity if intensity is not None else _array(array, {"MS:1000515"})
-            raw_time = _scan_time(spectrum)
-            time = retention_time({"scanList": {"scan": [{"scan start time": raw_time}]}}) if raw_time is not None else None
-            if time is not None and wavelength is not None and intensity is not None and len(wavelength) == len(intensity):
-                scan = DADScan(time, wavelength, intensity)
-                scans.append(scan)
-                if callback:
-                    callback(scan)
-            spectrum.clear()
-    scans.sort(key=lambda scan: scan.time)
-    return tuple(scans)
-
-
-def _scan_time(spectrum):
-    parameter = spectrum.find(".//{*}scan/{*}cvParam[@accession='MS:1000016']")
-    if parameter is None:
-        return None
-    value = float(parameter.get("value"))
-    unit = parameter.get("unitName", "minute")
-    from pyteomics.auxiliary import unitfloat
-    return unitfloat(value, unit)
 
 
 def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):

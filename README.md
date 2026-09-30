@@ -134,10 +134,9 @@ Preview points are transferred in small batches and the graph redraw is capped
 at roughly 13 frames per second, so a dense DAD run does not make the interface
 sluggish while it streams.
 
-⌊Blue⌋ LCMS first makes a lightweight DAD-only pass that skips MS binary-array
-decoding, then makes the full MS pass. Once the first pass establishes the full
-UV time range, an orange cursor advances through that range with the currently
-decoded MS1 scan.
+⌊Blue⌋ LCMS reads each source only once. DAD points appear as their spectra are
+encountered in the mzML stream, avoiding a second remote traversal before MS
+analysis begins.
 
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the

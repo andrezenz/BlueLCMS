@@ -196,25 +196,6 @@ def test_streamed_uv_points_draw_before_run_completion(tmp_path):
         window.close()
 
 
-def test_preview_cursor_uses_full_streamed_uv_range(tmp_path):
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow()
-    window.show()
-    try:
-        path = tmp_path / "remote.mzML"
-        item = QListWidgetItem(path.name)
-        item.setData(Qt.ItemDataRole.UserRole, path)
-        window.files.addItem(item)
-        item.setSelected(True)
-        window.load_token = 11
-        window.stream_uv = {path: [(1, 5, 254), (4, 6, 254)]}
-        window.uv_preview_ready(11)
-        np.testing.assert_allclose(window.uv.region.getRegion(), [1, 4])
-        assert window.loading_cursor.isVisible()
-        window.streamed_ms_time(11, 3)
-        assert window.loading_cursor.value() == 3
-    finally:
-        window.close()
 
 
 def test_multi_measurement_bins_stack_instead_of_overdrawing():
