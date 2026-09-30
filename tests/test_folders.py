@@ -1,0 +1,33 @@
+from bluelcms.folders import remote_mount_roots
+from bluelcms.mzml import discover_files
+from bluelcms import settings
+from PySide6.QtCore import QSettings
+
+
+def test_gvfs_afp_path_discovery_and_persistence(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    home = tmp_path / "home"
+    home.mkdir()
+    gvfs = runtime / "gvfs"
+    share = gvfs / "afp-volume:host=lab.local,user=scientist,volume=LC MS"
+    folder = share / "Run 1"
+    folder.mkdir(parents=True)
+    sample = folder / "sample.mzML"
+    sample.touch()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("HOME", str(home))
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    assert remote_mount_roots() == [gvfs]
+    assert discover_files(folder) == [sample]
+    settings.set_data_folder(folder)
+    assert settings.data_folder() == folder
+
+
+def test_unmounted_and_legacy_gvfs(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert remote_mount_roots() == []
+    legacy = tmp_path / ".gvfs"
+    legacy.mkdir()
+    assert remote_mount_roots() == [legacy]

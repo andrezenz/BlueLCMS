@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bluelcms"
+version = "0.2.2"
+description = "Standalone LC-MS and DAD data viewer"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7,<7",
+    "pyqtgraph>=0.13.7,<0.15",
+    "numpy>=1.26,<3",
+    "pyteomics>=5,<6",
+    "lxml>=5,<7",
+    "psims>=1.3,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+bluelcms = "bluelcms.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
