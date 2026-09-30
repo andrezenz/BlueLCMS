@@ -189,13 +189,14 @@ def test_streamed_uv_points_draw_before_run_completion(tmp_path):
         window.stream_uv = {path: []}
         window.stream_tic = {path: []}
         window.streamed_uv_points(9, path, [(1.5, 42, 254)])
-        window.streamed_tic_points(9, path, [(1.5, 120)])
+        window.streamed_tic_points(9, path, [(1.5, 120, "+"), (1.5, 80, "-")])
         QTest.qWait(100)
         app.processEvents()
         assert window.stream_uv[path] == [(1.5, 42, 254)]
-        assert window.stream_tic[path] == [(1.5, 120)]
+        assert window.stream_tic[path] == [(1.5, 120, "+"), (1.5, 80, "-")]
         assert "streaming" in window.uv.plotItem.titleLabel.text.lower()
         assert "MS TIC" in window.uv.plotItem.titleLabel.text
+        assert len(window.uv.tic_view.addedItems) == 2
     finally:
         window.close()
 

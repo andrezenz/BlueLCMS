@@ -83,7 +83,7 @@ class LoadJob(Job):
                 if len(points) >= 64:
                     flush()
         def stream_ms(scan):
-            tic.append((scan.time, float(scan.intensity.sum())))
+            tic.append((scan.time, float(scan.intensity.sum()), scan.polarity))
             if len(tic) >= 64:
                 flush()
         try:
@@ -336,21 +336,26 @@ class MainWindow(QMainWindow):
                 image = pg.ImageItem(matrix.T); image.setRect(QRectF(times.min(), waves.min(), np.ptp(times) or 1, np.ptp(waves) or 1)); self.uv.addItem(image); self.uv.setLabel("left", "Wavelength", units="nm"); self.uv.setTitle("DAD heatmap (first selected file)")
             return
         all_times = []
+        tic_by_polarity = {"+": {}, "-": {}}
         selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
         for index, path in enumerate(selected):
             if path in self.runs:
                 times, signal, used = self.runs[path].uv_trace(target)
-                tic = [(scan.time, float(scan.intensity.sum())) for scan in self.runs[path].scans]
+                tic = [(scan.time, float(scan.intensity.sum()), scan.polarity) for scan in self.runs[path].scans]
             else:
                 values = np.asarray(self.stream_uv.get(path, []), dtype=float).reshape(-1, 3)
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
                 tic = self.stream_tic.get(path, [])
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=path.name); all_times.extend(times)
-            if tic:
-                values = np.asarray(tic, dtype=float).reshape(-1, 2)
-                self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(COLORS[index % len(COLORS)], width=1, style=Qt.PenStyle.DashLine)))
+            for time, intensity, polarity in tic:
+                tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
+        for polarity, color, label in (("+", "#4ecf88", "Positive MS TIC"), ("-", "#f36f6f", "Negative MS TIC")):
+            if tic_by_polarity[polarity]:
+                points = sorted(tic_by_polarity[polarity].items())
+                values = np.asarray(points, dtype=float)
+                self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine), name=label))
         suffix = " (streaming)" if self.stream_uv or self.stream_tic else ""
-        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD + MS TIC — target {target} nm{suffix}; drag to select time")
+        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD + positive/negative MS TIC — target {target} nm{suffix}; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times)); self.uv.region.setBounds(bounds); self.uv.region.setRegion(bounds); self.uv.region.show(); self.uv.enableAutoRange()
         if loading:
@@ -409,4 +414,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.14"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.15"); window = MainWindow(); window.show(); return app.exec()
