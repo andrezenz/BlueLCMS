@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pyteomics.auxiliary import unitfloat
 
-from bluelcms.mzml import discover_files, load_run, mass_histograms, parse_spectra
+from bluelcms.mzml import discover_files, load_dad_preview, load_run, mass_histograms, parse_spectra
 
 
 def spectrum(time=1, polarity="positive scan", level=1, **arrays):
@@ -103,3 +103,13 @@ def test_real_mzml_decoding(tmp_path):
     assert all(s.time == 1 for s in run.scans)
     assert progress[-1] == (path.stat().st_size, path.stat().st_size)
     assert [(scan.time, scan.wavelength.tolist()) for scan in dad] == [(1, [250.0, 254.0, 260.0])]
+
+
+def test_dad_preview_skips_to_uv_data_without_full_ms_run(tmp_path):
+    path = write_mzml(tmp_path / "sample.mzML")
+    progress, streamed = [], []
+    preview = load_dad_preview(path, lambda copied, total: progress.append((copied, total)), streamed.append)
+    assert len(preview) == 1
+    np.testing.assert_equal(preview[0].intensity, [1, 12, 3])
+    assert streamed == list(preview)
+    assert progress[-1] == (path.stat().st_size, path.stat().st_size)

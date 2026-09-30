@@ -191,3 +191,43 @@ def test_streamed_uv_points_draw_before_run_completion(tmp_path):
         assert "streaming" in window.uv.plotItem.titleLabel.text.lower()
     finally:
         window.close()
+
+
+def test_preview_cursor_uses_full_streamed_uv_range(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        path = tmp_path / "remote.mzML"
+        item = QListWidgetItem(path.name)
+        item.setData(Qt.ItemDataRole.UserRole, path)
+        window.files.addItem(item)
+        item.setSelected(True)
+        window.load_token = 11
+        window.stream_uv = {path: [(1, 5, 254), (4, 6, 254)]}
+        window.uv_preview_ready(11)
+        np.testing.assert_allclose(window.uv.region.getRegion(), [1, 4])
+        assert window.loading_cursor.isVisible()
+        window.streamed_ms_time(11, 3)
+        assert window.loading_cursor.value() == 3
+    finally:
+        window.close()
+
+
+def test_multi_measurement_bins_stack_instead_of_overdrawing():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        window.histograms = {
+            "first": {"+": (np.array([500.05]), np.array([2.])), "-": (np.array([]), np.array([]))},
+            "second": {"+": (np.array([500.05]), np.array([3.])), "-": (np.array([]), np.array([]))},
+        }
+        window.positive.setXRange(500, 501, padding=0)
+        window.draw_histograms()
+        bars = [item for item in window.positive.items() if isinstance(item, pg.BarGraphItem)]
+        assert len(bars) == 2
+        stacked = sorted((float(item.opts["y0"][0]), float(item.opts["height"][0])) for item in bars)
+        assert stacked == [(0, 2), (2, 3)]
+    finally:
+        window.close()

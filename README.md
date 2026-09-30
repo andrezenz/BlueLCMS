@@ -59,7 +59,8 @@ updates the existing shortcut. To remove the shortcut, delete
 
 - Select multiple files in the sidebar with Ctrl-click or Shift-click to overlay
   their UV traces. The matching MS1 contributions use the same color in the
-  mass plots.
+  mass plots. Contributions that share a rendered mass pixel are stacked in
+  color rather than overdrawn, so every selected measurement remains visible.
 - Change **Wavelength** to redraw all selected DAD traces without rereading the
   source files. Choose **DAD heatmap** to view wavelength versus retention time
   for the first selected run.
@@ -128,6 +129,11 @@ For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The
 complete, sorted trace replaces the preview when loading finishes; the heatmap
 remains unavailable until that point.
+
+BlueLCMS first makes a lightweight DAD-only pass that skips MS binary-array
+decoding, then makes the full MS pass. Once the first pass establishes the full
+UV time range, an orange cursor advances through that range with the currently
+decoded MS1 scan.
 
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the

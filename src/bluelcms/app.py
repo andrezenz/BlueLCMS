@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
-from .mzml import discover_files, load_run, mass_histograms
+from .mzml import discover_files, load_dad_preview, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -34,6 +34,8 @@ class JobSignals(QObject):
     done = Signal(int, object, str)
     progress = Signal(int, int, int)
     uv_point = Signal(int, float, float, float)
+    uv_preview_done = Signal(int)
+    ms_time = Signal(int, float)
 
 
 class Job(QRunnable):
@@ -68,7 +70,9 @@ class LoadJob(Job):
                 index = int(np.argmin(np.abs(scan.wavelength - self.wavelength)))
                 self.signals.uv_point.emit(self.token, scan.time, scan.intensity[index], scan.wavelength[index])
         try:
-            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total), dad_callback=stream)
+            load_dad_preview(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total * 2), callback=stream)
+            self.signals.uv_preview_done.emit(self.token)
+            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, total + copied, total * 2), scan_callback=lambda scan: self.signals.ms_time.emit(self.token, scan.time))
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
         else:
@@ -104,6 +108,8 @@ class MainWindow(QMainWindow):
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.draw_uv)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
+        self.loading_cursor = pg.InfiniteLine(angle=90, pen=pg.mkPen("#f3ae57", width=2))
+        self.loading_cursor.hide()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.draw_histograms); self.negative.changed.connect(self.draw_histograms)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
@@ -129,6 +135,8 @@ class MainWindow(QMainWindow):
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
         job.signals.uv_point.connect(lambda t, time, signal, wavelength, p=path: self.streamed_uv(t, p, time, signal, wavelength))
+        job.signals.uv_preview_done.connect(self.uv_preview_ready)
+        job.signals.ms_time.connect(self.streamed_ms_time)
         job.signals.done.connect(callback)
         job.signals.done.connect(lambda *_: self.jobs.discard(job))
         self.pool.start(job)
@@ -226,7 +234,7 @@ class MainWindow(QMainWindow):
         else:
             self.set_download_state(path, False)
             self.progress.hide()
-        if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
+        if len(self.runs) == len(self.files.selectedItems()): self.loading_cursor.hide(); self.set_loading(False); self.draw_uv(); self.timer.start()
 
     def streamed_uv(self, token, path, time, signal, wavelength):
         """Draw only the currently selected parse stream; stale jobs are ignored."""
@@ -234,6 +242,19 @@ class MainWindow(QMainWindow):
             return
         self.stream_uv[path].append((time, signal, wavelength))
         self.draw_uv()
+
+    def uv_preview_ready(self, token):
+        if token != self.load_token:
+            return
+        self.draw_uv()
+        if self.uv.region.isVisible():
+            self.uv.addItem(self.loading_cursor)
+            self.loading_cursor.setPos(self.uv.region.getRegion()[0])
+            self.loading_cursor.show()
+
+    def streamed_ms_time(self, token, time):
+        if token == self.load_token and self.loading_cursor.isVisible():
+            self.loading_cursor.setPos(time)
 
     def load_progress(self, token, path, copied, total):
         if token != self.load_token:
@@ -330,9 +351,14 @@ class MainWindow(QMainWindow):
             if full_x and (high < min(x.min() for x in full_x) or low > max(x.max() for x in full_x)):
                 plot.setXRange(min(x.min() for x in full_x), max(x.max() for x in full_x), padding=.03)
                 low, high = plot.getViewBox().viewRange()[0]
+            stacked = {}
             for index, result in enumerate(self.histograms.values()):
                 x, y = result[polarity]; bx, by, width = pixel_buckets(x, y, low, high, pixels); plot.data.append((x, y))
-                if len(bx): plot.addItem(pg.BarGraphItem(x=bx, height=by, width=width, brush=COLORS[index % len(COLORS)], pen=None))
+                if len(bx):
+                    base = np.asarray([stacked.get(value, 0) for value in bx])
+                    for value, height in zip(bx, by):
+                        stacked[value] = stacked.get(value, 0) + height
+                    plot.addItem(pg.BarGraphItem(x=bx, y0=base, height=by, width=width, brush=COLORS[index % len(COLORS)], pen=None))
             if not plot.data: plot.setTitle(f"{title} — no MS1 data in selection")
         self.label_peaks()
 
@@ -356,4 +382,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.7"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.9"); window = MainWindow(); window.show(); return app.exec()
