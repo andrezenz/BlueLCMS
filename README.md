@@ -130,6 +130,10 @@ decoded. The title shows **(streaming)** until the full run is ready. The
 complete, sorted trace replaces the preview when loading finishes; the heatmap
 remains unavailable until that point.
 
+Preview points are transferred in small batches and the graph redraw is capped
+at roughly 13 frames per second, so a dense DAD run does not make the interface
+sluggish while it streams.
+
 ⌊Blue⌋ LCMS first makes a lightweight DAD-only pass that skips MS binary-array
 decoding, then makes the full MS pass. Once the first pass establishes the full
 UV time range, an orange cursor advances through that range with the currently

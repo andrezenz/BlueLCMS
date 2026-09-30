@@ -33,7 +33,7 @@ def downloading_icon():
 class JobSignals(QObject):
     done = Signal(int, object, str)
     progress = Signal(int, int, int)
-    uv_point = Signal(int, float, float, float)
+    uv_points = Signal(int, object)
     uv_preview_done = Signal(int)
     ms_time = Signal(int, float)
 
@@ -65,12 +65,23 @@ class LoadJob(Job):
         self.wavelength = wavelength
 
     def run(self):
+        points = []
+
+        def flush():
+            nonlocal points
+            if points:
+                self.signals.uv_points.emit(self.token, points)
+                points = []
+
         def stream(scan):
             if len(scan.wavelength) and scan.wavelength.min() <= self.wavelength <= scan.wavelength.max():
                 index = int(np.argmin(np.abs(scan.wavelength - self.wavelength)))
-                self.signals.uv_point.emit(self.token, scan.time, scan.intensity[index], scan.wavelength[index])
+                points.append((scan.time, scan.intensity[index], scan.wavelength[index]))
+                if len(points) >= 64:
+                    flush()
         try:
             load_dad_preview(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total * 2), callback=stream)
+            flush()
             self.signals.uv_preview_done.emit(self.token)
             result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, total + copied, total * 2), scan_callback=lambda scan: self.signals.ms_time.emit(self.token, scan.time))
         except Exception as error:
@@ -90,6 +101,7 @@ class MainWindow(QMainWindow):
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
+        self.stream_timer = QTimer(self); self.stream_timer.setSingleShot(True); self.stream_timer.setInterval(75); self.stream_timer.timeout.connect(self.draw_uv)
         self.progress = QProgressBar(); self.progress.setFixedWidth(260); self.progress.setTextVisible(True); self.progress.hide()
         self.statusBar().addPermanentWidget(self.progress)
         menu = self.menuBar().addMenu("Settings")
@@ -134,7 +146,7 @@ class MainWindow(QMainWindow):
         job = LoadJob(token, source, self.wavelength.value())
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
-        job.signals.uv_point.connect(lambda t, time, signal, wavelength, p=path: self.streamed_uv(t, p, time, signal, wavelength))
+        job.signals.uv_points.connect(lambda t, points, p=path: self.streamed_uv_points(t, p, points))
         job.signals.uv_preview_done.connect(self.uv_preview_ready)
         job.signals.ms_time.connect(self.streamed_ms_time)
         job.signals.done.connect(callback)
@@ -236,16 +248,18 @@ class MainWindow(QMainWindow):
             self.progress.hide()
         if len(self.runs) == len(self.files.selectedItems()): self.loading_cursor.hide(); self.set_loading(False); self.draw_uv(); self.timer.start()
 
-    def streamed_uv(self, token, path, time, signal, wavelength):
-        """Draw only the currently selected parse stream; stale jobs are ignored."""
+    def streamed_uv_points(self, token, path, points):
+        """Queue a compact live preview; expensive drawing runs at most 13 fps."""
         if token != self.load_token or path not in self.stream_uv:
             return
-        self.stream_uv[path].append((time, signal, wavelength))
-        self.draw_uv()
+        self.stream_uv[path].extend(points)
+        if not self.stream_timer.isActive():
+            self.stream_timer.start()
 
     def uv_preview_ready(self, token):
         if token != self.load_token:
             return
+        self.stream_timer.stop()
         self.draw_uv()
         if self.uv.region.isVisible():
             self.uv.addItem(self.loading_cursor)
@@ -378,8 +392,8 @@ class MainWindow(QMainWindow):
                 if all(abs(x - previous) > (high - low) / 12 for previous in used):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
-    def closeEvent(self, event): self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
+    def closeEvent(self, event): self.stream_timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.10"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.11"); window = MainWindow(); window.show(); return app.exec()
