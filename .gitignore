@@ -7,3 +7,16 @@ __pycache__/
 htmlcov/
 build/
 dist/
+
+# Local research data and generated analysis records
+*.mzML
+*.mzml
+*.raw
+*.RAW
+*.d/
+*.bluelcms-integrations.json
+
+# Local credentials and configuration
+.env
+.env.*
+!.env.example

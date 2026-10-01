@@ -523,4 +523,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.0"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.1"); window = MainWindow(); window.show(); return app.exec()
