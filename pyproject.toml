@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bluelcms"
-version = "0.4.1"
+version = "0.4.2"
 description = "Standalone LC-MS and DAD data viewer"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.7,<7",

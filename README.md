@@ -3,6 +3,14 @@
 Standalone LC-MS analysis desktop application, with a Qt-independent analysis
 module for future integration with SynthesisMapper.
 
+## License
+
+BlueLCMS is available under the [MIT License](LICENSE). Commercial use is
+welcome. If you use BlueLCMS commercially, please consider contacting the
+maintainer; this request is voluntary and is not a license condition.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
+
 ## Install and run
 
 Python 3.12 or newer is required.
