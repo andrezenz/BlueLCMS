@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="18" fill="white"/>
+  <path d="M18 48v54h15M110 48v54H95" fill="none" stroke="#2185c5" stroke-linecap="square" stroke-width="8"/>
+  <path d="M36 40c7 0 8-12 14-12s6 12 12 12c7 0 8-21 15-21s7 21 15 21" fill="none" stroke="#2185c5" stroke-linecap="round" stroke-width="4"/>
+  <text x="64" y="84" fill="#111111" font-family="DejaVu Serif, Georgia, serif" font-size="20" font-weight="700" text-anchor="middle">LCMS</text>
+</svg>

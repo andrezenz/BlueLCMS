@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <rect width="128" height="128" rx="18" fill="white"/>
-  <path d="M27 38v50h15M101 38v50H86" fill="none" stroke="#1769aa" stroke-linecap="square" stroke-width="7"/>
-  <text x="64" y="76" fill="#111111" font-family="DejaVu Sans Mono, monospace" font-size="21" font-weight="700" text-anchor="middle">LCMS</text>
+  <path d="M18 35v58h15M110 35v58H95" fill="none" stroke="#2185c5" stroke-linecap="square" stroke-width="8"/>
+  <text x="64" y="74" fill="#111111" font-family="DejaVu Sans Mono, monospace" font-size="19" font-weight="700" text-anchor="middle">LCMS</text>
 </svg>
