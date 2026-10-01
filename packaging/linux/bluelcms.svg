@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#123b67"/>
-  <path d="M22 92h84M28 82l16-24 15 12 19-34 22 40" fill="none" stroke="#74c9ff" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
-  <circle cx="78" cy="36" r="7" fill="#f3ae57"/>
+  <rect width="128" height="128" rx="18" fill="white"/>
+  <path d="M31 26v72h20" fill="none" stroke="#1769aa" stroke-linecap="square" stroke-width="9"/>
+  <path d="M97 26v72H77" fill="none" stroke="#1769aa" stroke-linecap="square" stroke-width="9"/>
+  <text x="64" y="72" fill="#111111" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle">LCMS</text>
 </svg>
