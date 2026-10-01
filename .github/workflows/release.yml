@@ -33,7 +33,7 @@ jobs:
         run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
-        run: mkdir package && cp dist/BlueLCMS package/ && cp packaging/linux/* package/ && tar -C package -czf dist/${{ matrix.artifact }} .
+        run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/* package/ && tar -C package -czf dist/${{ matrix.artifact }} .
       - name: Package macOS disk image
         if: runner.os == 'macOS'
         run: hdiutil create -volname BlueLCMS -srcfolder dist/BlueLCMS.app -ov -format UDZO dist/${{ matrix.artifact }}
