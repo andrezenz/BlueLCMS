@@ -296,7 +296,11 @@ class MainWindow(QMainWindow):
         version = QApplication.applicationVersion()
         if not manual:
             settings.settings().setValue("packaged_release_prompt", version)
-        if error or not result:
+        if error:
+            if manual:
+                QMessageBox.warning(self, "Release check failed", error)
+            return
+        if not result:
             if manual:
                 QMessageBox.warning(self, "Release check failed", f"No {channel} release is currently available from GitHub.")
             return

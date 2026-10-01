@@ -16,5 +16,10 @@ def test_latest_release_reads_github_payload(monkeypatch):
 
 
 def test_latest_release_handles_network_failure(monkeypatch):
-    monkeypatch.setattr(releases, "urlopen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
-    assert releases.latest_release() is None
+    monkeypatch.setattr(releases, "urlopen", lambda *args, **kwargs: (_ for _ in ()).throw(releases.URLError("offline")))
+    try:
+        releases.latest_release()
+    except releases.ReleaseError as error:
+        assert "offline" in str(error)
+    else:
+        raise AssertionError("network failures must be reported")
