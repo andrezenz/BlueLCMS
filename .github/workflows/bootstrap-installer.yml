@@ -10,10 +10,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact: BlueLCMS-installer-linux-x86_64
+            binary: BlueLCMS-installer-linux-x86_64
+            artifact: BlueLCMS-installer-linux-x86_64.tar.gz
           - os: macos-latest
-            artifact: BlueLCMS-installer-macos
+            binary: BlueLCMS-installer-macos
+            artifact: BlueLCMS-installer-macos.zip
           - os: windows-latest
+            binary: BlueLCMS-installer-windows.exe
             artifact: BlueLCMS-installer-windows.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -22,8 +25,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip pyinstaller .
-      - run: python -m PyInstaller --noconfirm --onefile --windowed --name ${{ matrix.artifact }} --paths src packaging/entrypoints/installer.py
+      - run: python -m PyInstaller --noconfirm --onefile --windowed --name ${{ matrix.binary }} --paths src packaging/entrypoints/installer.py
+      - name: Package Linux bootstrap
+        if: runner.os == 'Linux'
+        run: mkdir package && cp dist/${{ matrix.binary }} package/ && cp packaging/bootstrap/linux-README.txt package/README.txt && tar -C package -czf dist/${{ matrix.artifact }} .
+      - name: Package macOS bootstrap
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/${{ matrix.binary }} dist/${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}*
+          path: dist/${{ matrix.artifact }}
