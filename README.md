@@ -146,6 +146,10 @@ total-ion-current traces on its right-hand axis as MS spectra are decoded. They
 provide useful loading feedback before DAD spectra become available without
 changing the UV signal scale.
 
+Use the **MS TIC** toolbar toggle to persistently show or hide completed-run
+TIC traces. Streaming TIC remains visible while a file is loading even when the
+saved preference is off.
+
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the
 selection does not block the application: completed results from the old

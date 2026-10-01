@@ -59,6 +59,9 @@ def test_cache_folder_setting(tmp_path, monkeypatch):
     assert settings.show_date_prefix() is True
     settings.set_show_date_prefix(False)
     assert settings.show_date_prefix() is False
+    assert settings.show_tic() is True
+    settings.set_show_tic(False)
+    assert settings.show_tic() is False
 
 
 def test_desktop_display_name_keeps_ascii_launcher_identifier(tmp_path):

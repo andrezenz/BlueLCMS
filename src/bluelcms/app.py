@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QT
 from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
-    QProgressBar, QSpinBox, QStyle, QVBoxLayout, QWidget)
+    QProgressBar, QSpinBox, QStyle, QToolBar, QVBoxLayout, QWidget)
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
@@ -109,6 +109,13 @@ class MainWindow(QMainWindow):
         self.stream_timer = QTimer(self); self.stream_timer.setSingleShot(True); self.stream_timer.setInterval(75); self.stream_timer.timeout.connect(self.draw_uv)
         self.progress = QProgressBar(); self.progress.setFixedWidth(260); self.progress.setTextVisible(True); self.progress.hide()
         self.statusBar().addPermanentWidget(self.progress)
+        toolbar = QToolBar("Display", self)
+        self.addToolBar(toolbar)
+        self.show_tic = QAction("MS TIC", self)
+        self.show_tic.setCheckable(True)
+        self.show_tic.setChecked(settings.show_tic())
+        self.show_tic.toggled.connect(self.set_show_tic)
+        toolbar.addAction(self.show_tic)
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Choose mzML folder…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
@@ -184,6 +191,10 @@ class MainWindow(QMainWindow):
         for index in range(self.files.count()):
             item = self.files.item(index)
             item.setText(file_display_name(item.data(Qt.ItemDataRole.UserRole), show))
+
+    def set_show_tic(self, show):
+        settings.set_show_tic(show)
+        self.draw_uv()
 
     def open_debug_terminal(self):
         terminal = shutil.which("x-terminal-emulator")
@@ -323,6 +334,8 @@ class MainWindow(QMainWindow):
         loading = self.loading_timer.isActive()
         self.uv.clear(); self.uv.addItem(self.uv.region); self.uv.region.hide()
         self.uv.tic_view.clear()
+        show_tic = settings.show_tic() or bool(self.stream_tic)
+        self.uv.showAxis("right", show_tic)
         if loading:
             loading_overlay(self.uv, True)
         if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
@@ -347,15 +360,18 @@ class MainWindow(QMainWindow):
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
                 tic = self.stream_tic.get(path, [])
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=path.name); all_times.extend(times)
-            for time, intensity, polarity in tic:
-                tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
-        for polarity, color, label in (("+", "#4ecf88", "Positive MS TIC"), ("-", "#f36f6f", "Negative MS TIC")):
-            if tic_by_polarity[polarity]:
-                points = sorted(tic_by_polarity[polarity].items())
-                values = np.asarray(points, dtype=float)
-                self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine), name=label))
+            if show_tic:
+                for time, intensity, polarity in tic:
+                    tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
+        if show_tic:
+            for polarity, color, label in (("+", "#4ecf88", "Positive MS TIC"), ("-", "#f36f6f", "Negative MS TIC")):
+                if tic_by_polarity[polarity]:
+                    points = sorted(tic_by_polarity[polarity].items())
+                    values = np.asarray(points, dtype=float)
+                    self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine), name=label))
         suffix = " (streaming)" if self.stream_uv or self.stream_tic else ""
-        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"UV / DAD + positive/negative MS TIC — target {target} nm{suffix}; drag to select time")
+        title = "UV / DAD + positive/negative MS TIC" if show_tic else "UV / DAD"
+        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"{title} — target {target} nm{suffix}; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times)); self.uv.region.setBounds(bounds); self.uv.region.setRegion(bounds); self.uv.region.show(); self.uv.enableAutoRange()
         if loading:
@@ -414,4 +430,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.15"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.16"); window = MainWindow(); window.show(); return app.exec()

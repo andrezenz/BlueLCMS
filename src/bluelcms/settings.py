@@ -33,3 +33,11 @@ def show_date_prefix() -> bool:
 
 def set_show_date_prefix(show: bool) -> None:
     settings().setValue("show_date_prefix", show)
+
+
+def show_tic() -> bool:
+    return settings().value("show_tic", True, type=bool)
+
+
+def set_show_tic(show: bool) -> None:
+    settings().setValue("show_tic", show)
