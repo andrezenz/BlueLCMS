@@ -7,6 +7,7 @@ __pycache__/
 htmlcov/
 build/
 dist/
+installer-dist/
 
 # Local research data and generated analysis records
 *.mzML

@@ -11,8 +11,8 @@ class Response:
 
 
 def test_latest_release_reads_github_payload(monkeypatch):
-    monkeypatch.setattr(releases, "urlopen", lambda *args, **kwargs: Response({"tag_name": "v0.4.4", "html_url": "https://example.test/release"}))
-    assert releases.latest_release() == {"tag": "v0.4.4", "url": "https://example.test/release"}
+    monkeypatch.setattr(releases, "urlopen", lambda *args, **kwargs: Response({"tag_name": "v0.4.4", "html_url": "https://example.test/release", "assets": []}))
+    assert releases.latest_release() == {"tag": "v0.4.4", "url": "https://example.test/release", "assets": []}
 
 
 def test_latest_release_handles_network_failure(monkeypatch):

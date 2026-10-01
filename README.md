@@ -21,11 +21,19 @@ raw data, caches, and integration sidecars are not changed by an update.
 
 ## Installers
 
-Pushing a `v*` tag starts the GitHub Actions release workflow. It builds a
-Linux x86_64 archive, a macOS disk image, and a Windows installer on their
-native GitHub-hosted runners, then attaches them to the GitHub release. Packaged
-applications check GitHub Releases on their first launch and offer to open the
-latest release download page when a newer version is available.
+Users download the small bootstrap installer from the project website, not from
+the repository. It prompts for `stable` or `development`, then downloads the
+matching full application package from GitHub Releases. Pushing a `v*` tag
+builds the stable packages; every `dev` push rebuilds the moving `dev-latest`
+prerelease. Both releases contain a Linux x86_64 archive, a macOS disk image,
+and a Windows installer, built on their native GitHub-hosted runners.
+
+Run the manually triggered **Build website installer** workflow when a new
+website bootstrap download is needed. Its output is an Actions artifact for
+uploading to the project website; it is never committed to Git or published as
+a GitHub release asset. Packaged applications also check GitHub Releases on
+their first launch and offer to open the latest release download page when a
+newer version is available.
 
 On Linux, extract the release archive and run `sh install.sh` from the extracted
 directory to install the application and desktop entry under `~/.local`.

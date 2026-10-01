@@ -5,15 +5,22 @@ from urllib.request import Request, urlopen
 
 
 RELEASES_URL = "https://api.github.com/repos/andrezenz/BlueLCMS/releases/latest"
+DEVELOPMENT_RELEASE_URL = "https://api.github.com/repos/andrezenz/BlueLCMS/releases/tags/dev-latest"
 
 
-def latest_release() -> dict[str, str] | None:
-    request = Request(RELEASES_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": "BlueLCMS"})
+def release(channel="stable") -> dict[str, object] | None:
+    url = RELEASES_URL if channel == "stable" else DEVELOPMENT_RELEASE_URL
+    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "BlueLCMS"})
     try:
         with urlopen(request, timeout=5) as response:
             release = json.load(response)
     except OSError:
         return None
     tag = release.get("tag_name")
-    url = release.get("html_url")
-    return {"tag": tag, "url": url} if isinstance(tag, str) and isinstance(url, str) else None
+    page = release.get("html_url")
+    assets = release.get("assets")
+    return {"tag": tag, "url": page, "assets": assets} if isinstance(tag, str) and isinstance(page, str) and isinstance(assets, list) else None
+
+
+def latest_release() -> dict[str, object] | None:
+    return release()
