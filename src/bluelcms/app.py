@@ -11,11 +11,12 @@ from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
     QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
-    QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget)
+    QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
 from .integrations import integrate_trace, load_integrations, save_integrations
+from . import updater
 from .mzml import discover_files, file_display_name, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
@@ -131,6 +132,9 @@ class MainWindow(QMainWindow):
         self.show_date_prefix.setChecked(settings.show_date_prefix())
         self.show_date_prefix.toggled.connect(self.set_show_date_prefix)
         menu.addAction(self.show_date_prefix)
+        update_menu = self.menuBar().addMenu("Update")
+        for text, slot in (("Check for updates", self.check_updates), ("Update to dev", lambda: self.update_to("dev")), ("Update to stable", lambda: self.update_to("stable")), ("Select release version…", self.select_release)):
+            action = QAction(text, self); action.triggered.connect(slot); update_menu.addAction(action)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
         self.files.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.files.itemSelectionChanged.connect(self.select_files)
@@ -225,6 +229,53 @@ class MainWindow(QMainWindow):
         root = Path(__file__).resolve().parents[2]
         if not QProcess.startDetached(terminal, ["-e", sys.executable, str(root / "debug_launch.py")]):
             QMessageBox.warning(self, "Debug terminal failed", "The system terminal could not be started.")
+
+    def check_updates(self):
+        self.statusBar().showMessage("Checking GitHub for updates…")
+        self.submit(0, updater.status, self.update_status_ready, updater.repository_root(), True)
+
+    def update_status_ready(self, token, result, error):
+        if error:
+            self.statusBar().showMessage("Could not check for updates.")
+            QMessageBox.warning(self, "Update check failed", error)
+            return
+        releases = ", ".join(result["releases"][:5]) or "No release tags"
+        QMessageBox.information(self, "BlueLCMS update status", f"Current branch: {result['branch']}\nCurrent commit: {result['commit']}\n\nRecent releases: {releases}")
+        self.statusBar().showMessage("Update check complete.")
+
+    def select_release(self):
+        self.statusBar().showMessage("Fetching available releases…")
+        self.submit(0, updater.status, self.release_options_ready, updater.repository_root(), True)
+
+    def release_options_ready(self, token, result, error):
+        if error:
+            QMessageBox.warning(self, "Release check failed", error)
+            return
+        release, accepted = QInputDialog.getItem(self, "Select BlueLCMS release", "Version:", result["releases"], 0, False)
+        if accepted and release:
+            self.update_to(release)
+
+    def update_to(self, target):
+        answer = QMessageBox.question(self, "Confirm update", f"Update BlueLCMS to {target}?\n\nLocal source changes will prevent the update.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.statusBar().showMessage(f"Updating to {target}…")
+        self.submit(0, updater.update, self.updated, updater.repository_root(), target)
+
+    def updated(self, token, result, error):
+        if error:
+            self.statusBar().showMessage("Update failed; current application remains running.")
+            QMessageBox.warning(self, "Update failed", error)
+            return
+        answer = QMessageBox.question(self, "Update complete", f"Updated to {result['branch']} at {result['commit']}. Restart now?")
+        if answer == QMessageBox.StandardButton.Yes:
+            root = updater.repository_root()
+            if QProcess.startDetached(str(root / ".venv" / "bin" / "python"), [str(root / "launch.py")]):
+                QApplication.quit()
+            else:
+                QMessageBox.warning(self, "Restart failed", "Restart BlueLCMS manually to use the updated version.")
+        else:
+            self.statusBar().showMessage("Update complete. Restart BlueLCMS to use the new version.")
 
     def cache_for(self, source):
         return cached_path(source, settings.cache_folder())
@@ -523,4 +574,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.2"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.3"); window = MainWindow(); window.show(); return app.exec()

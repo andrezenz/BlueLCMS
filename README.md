@@ -11,6 +11,14 @@ maintainer; this request is voluntary and is not a license condition.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
 
+## Updates
+
+Use the **Update** menu to check the official GitHub repository, fast-forward
+to `dev` or `stable`, or select an immutable `v*` release tag. Updates refuse
+checkouts with local source changes, use only the official repository URL, and
+reinstall project dependencies before offering a restart. Application settings,
+raw data, caches, and integration sidecars are not changed by an update.
+
 ## Install and run
 
 Python 3.12 or newer is required.
