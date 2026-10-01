@@ -3,6 +3,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QMenu
 
 
 def pixel_buckets(x, y, minimum, maximum, pixels):
@@ -48,6 +49,7 @@ class RegionViewBox(ResetViewBox):
 
 
 class UVPlot(pg.PlotWidget):
+    integrate_requested = Signal()
     def __init__(self):
         self.view = RegionViewBox()
         super().__init__(viewBox=self.view)
@@ -63,6 +65,7 @@ class UVPlot(pg.PlotWidget):
         self.getViewBox().sigResized.connect(self.update_tic_view)
         self.trace = self.plot(pen=pg.mkPen("#48a9ef", width=2))
         self.region = pg.LinearRegionItem(brush=(72, 169, 239, 45), movable=False)
+        self.integration_enabled = False
         for line in self.region.lines:
             line.setMovable(True)
         self.addItem(self.region)
@@ -73,6 +76,17 @@ class UVPlot(pg.PlotWidget):
     def update_tic_view(self):
         self.tic_view.setGeometry(self.getViewBox().sceneBoundingRect())
         self.tic_view.linkedViewChanged(self.getViewBox(), self.tic_view.XAxis)
+
+    def contextMenuEvent(self, event):
+        time = self.getViewBox().mapSceneToView(self.mapToScene(event.pos())).x()
+        start, stop = self.region.getRegion()
+        if self.integration_enabled and self.region.isVisible() and start <= time <= stop:
+            menu = QMenu(self)
+            integrate = menu.addAction("Integrate")
+            if menu.exec(event.globalPos()) == integrate:
+                self.integrate_requested.emit()
+        else:
+            super().contextMenuEvent(event)
 
 
 class MassPlot(pg.PlotWidget):

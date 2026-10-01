@@ -150,6 +150,21 @@ Use the **MS TIC** toolbar toggle to persistently show or hide completed-run
 TIC traces. Streaming TIC remains visible while a file is loading even when the
 saved preference is off.
 
+## UV Integrations
+
+With exactly one fully loaded measurement selected, right-click inside the
+shaded UV region and choose **Integrate**. The bottom **UV integrations** panel
+lists its start/stop times, wavelength, absolute trapezoidal integral, and its
+percentage of all listed integrals. Integrals are tied to their selected
+wavelength and can be removed or cleared from the panel.
+
+BlueLCMS does not modify mzML files. It saves records in a
+`.mzML.bluelcms-integrations.json` sidecar beside a writable source. For AFP or
+other read-only sources, it atomically falls back to
+`${XDG_DATA_HOME:-~/.local/share}/BlueLCMS/integrations`. Sidecars include the
+raw source path, size, and modification time; changed source files are marked
+stale and their prior records are not loaded.
+
 An uncached AFP entry shows a refresh-and-download icon and a **Downloading
 remote source…** tooltip while it is being parsed or copied. Changing the
 selection does not block the application: completed results from the old

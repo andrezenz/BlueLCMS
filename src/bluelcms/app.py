@@ -10,10 +10,12 @@ from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QT
 from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
-    QProgressBar, QSpinBox, QStyle, QToolBar, QVBoxLayout, QWidget)
+    QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
+    QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget)
 
 from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
+from .integrations import integrate_trace, load_integrations, save_integrations
 from .mzml import discover_files, file_display_name, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
@@ -102,6 +104,7 @@ class MainWindow(QMainWindow):
         self.resize(1250, 850)
         self.folder = None
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
+        self.integrations, self.integration_source = [], None
         self.load_token = self.region_token = self.folder_token = 0
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
@@ -141,8 +144,26 @@ class MainWindow(QMainWindow):
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
         root = QSplitter(Qt.Orientation.Horizontal); root.addWidget(controls); root.addWidget(plots); root.setStretchFactor(1, 1); root.setSizes([250, 1000]); self.setCentralWidget(root)
+        self.integration_table = QTableWidget(0, 5)
+        self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Wavelength (nm)", "Absolute integral", "% of integrals"))
+        self.integration_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.integration_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        remove = QPushButton("Remove selected")
+        remove.clicked.connect(self.remove_integration)
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self.clear_integrations)
+        integration_panel = QWidget()
+        integration_layout = QVBoxLayout(integration_panel)
+        integration_layout.addWidget(self.integration_table)
+        actions = QHBoxLayout(); actions.addWidget(remove); actions.addWidget(clear); actions.addStretch()
+        integration_layout.addLayout(actions)
+        self.integration_dock = QDockWidget("UV integrations", self)
+        self.integration_dock.setWidget(integration_panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.integration_dock)
+        self.integration_dock.hide()
         self.timer = QTimer(self); self.region_timer = self.timer; self.timer.setSingleShot(True); self.timer.setInterval(120); self.timer.timeout.connect(self.calculate_region)
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
+        self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
         if saved := settings.data_folder(): self.folder = saved; self.refresh_files()
 
@@ -242,6 +263,8 @@ class MainWindow(QMainWindow):
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
         self.load_token += 1; token = self.load_token; self.runs = {p: r for p, r in self.runs.items() if p in paths}; self.stream_uv = {p: [] for p in paths if p not in self.runs}; self.stream_tic = {p: [] for p in paths if p not in self.runs}; self.histograms.clear()
+        self.uv.integration_enabled = len(paths) == 1 and paths[0] in self.runs
+        self.refresh_integrations()
         missing = [p for p in paths if p not in self.runs]
         if missing: self.set_loading(True)
         for path in missing:
@@ -271,7 +294,77 @@ class MainWindow(QMainWindow):
         else:
             self.set_download_state(path, False)
             self.progress.hide()
-        if len(self.runs) == len(self.files.selectedItems()): self.set_loading(False); self.draw_uv(); self.timer.start()
+        if len(self.runs) == len(self.files.selectedItems()):
+            self.uv.integration_enabled = len(self.runs) == 1
+            self.refresh_integrations()
+            self.set_loading(False); self.draw_uv(); self.timer.start()
+
+    def selected_integration_source(self):
+        paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
+        return paths[0] if len(paths) == 1 and paths[0] in self.runs else None
+
+    def refresh_integrations(self):
+        source = self.selected_integration_source()
+        self.integrations, self.integration_source = [], source
+        if source is not None:
+            records, _, stale = load_integrations(source, settings.integration_folder())
+            self.integrations = records
+            self.integration_dock.setWindowTitle("UV integrations (source changed)" if stale else "UV integrations")
+        self.refresh_integration_table()
+
+    def refresh_integration_table(self):
+        self.integration_table.setRowCount(len(self.integrations))
+        total = sum(record["absolute_integral"] for record in self.integrations)
+        for row, record in enumerate(self.integrations):
+            values = (
+                f"{record['start_min']:.4f}", f"{record['stop_min']:.4f}",
+                f"{record['wavelength_nm']:g}", f"{record['absolute_integral']:.6g}",
+                f"{100 * record['absolute_integral'] / total:.2f}%" if len(self.integrations) > 1 and total else "",
+            )
+            for column, value in enumerate(values):
+                self.integration_table.setItem(row, column, QTableWidgetItem(value))
+        self.integration_table.resizeColumnsToContents()
+
+    def integrate_region(self):
+        source = self.selected_integration_source()
+        if source is None:
+            return
+        start, stop = self.uv.region.getRegion()
+        target = self.wavelength.value()
+        times, signal, _ = self.runs[source].uv_trace(target)
+        try:
+            integral = integrate_trace(times, signal, start, stop)
+        except ValueError as error:
+            self.statusBar().showMessage(f"Cannot integrate: {error}")
+            return
+        if self.integration_source != source:
+            self.refresh_integrations()
+        self.integrations.append({"start_min": min(start, stop), "stop_min": max(start, stop), "wavelength_nm": target, "absolute_integral": integral})
+        try:
+            save_integrations(source, settings.integration_folder(), self.integrations)
+        except OSError as error:
+            self.integrations.pop()
+            self.statusBar().showMessage(f"Could not save integration: {error}")
+            return
+        self.refresh_integration_table()
+        self.integration_dock.show()
+        self.statusBar().showMessage(f"Integrated {min(start, stop):.4f}–{max(start, stop):.4f} min")
+
+    def remove_integration(self):
+        source = self.integration_source
+        selected = self.integration_table.selectionModel().selectedRows()
+        if source is None or not selected:
+            return
+        del self.integrations[selected[0].row()]
+        save_integrations(source, settings.integration_folder(), self.integrations)
+        self.refresh_integration_table()
+
+    def clear_integrations(self):
+        if self.integration_source is None or not self.integrations:
+            return
+        self.integrations.clear()
+        save_integrations(self.integration_source, settings.integration_folder(), self.integrations)
+        self.refresh_integration_table()
 
     def streamed_uv_points(self, token, path, points):
         """Queue a compact live preview; expensive drawing runs at most 13 fps."""
@@ -430,4 +523,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.3.16"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.0"); window = MainWindow(); window.show(); return app.exec()

@@ -1,6 +1,7 @@
 """Persistent desktop preferences, separate from analysis functionality."""
 
 from pathlib import Path
+import os
 
 from PySide6.QtCore import QSettings
 
@@ -41,3 +42,8 @@ def show_tic() -> bool:
 
 def set_show_tic(show: bool) -> None:
     settings().setValue("show_tic", show)
+
+
+def integration_folder() -> Path:
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return data_home / "BlueLCMS" / "integrations"

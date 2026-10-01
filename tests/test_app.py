@@ -220,3 +220,19 @@ def test_multi_measurement_bins_stack_instead_of_overdrawing():
         assert stacked == [(0, 2), (2, 3)]
     finally:
         window.close()
+
+
+def test_integration_table_calculates_percentages(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.integrations = [
+            {"start_min": 1, "stop_min": 2, "wavelength_nm": 254, "absolute_integral": 2},
+            {"start_min": 3, "stop_min": 4, "wavelength_nm": 280, "absolute_integral": 6},
+        ]
+        window.refresh_integration_table()
+        assert window.integration_table.item(0, 4).text() == "25.00%"
+        assert window.integration_table.item(1, 4).text() == "75.00%"
+        assert window.uv.integration_enabled is False
+    finally:
+        window.close()
