@@ -36,7 +36,7 @@ jobs:
         if: github.ref != 'refs/heads/dev'
         run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
-        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
+        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --collect-data psims --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/* package/ && tar -C package -czf dist/${{ matrix.artifact }} .
