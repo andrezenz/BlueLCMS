@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
-from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
+from .folders import cached_path, cleanup_expired_cache, copy_to_cache, is_afp_path, remote_mount_roots
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
@@ -148,7 +148,10 @@ class MainWindow(QMainWindow):
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
         self.wavelength.valueChanged.connect(self.draw_uv)
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.draw_uv)
-        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
+        self.cache_expiry = QSpinBox(); self.cache_expiry.setRange(0, 365); self.cache_expiry.setValue(settings.cache_expiry_days()); self.cache_expiry.setSuffix(" days")
+        self.cache_expiry.setToolTip("Cached files are automatically removed after this many days (0 = never expire)")
+        self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
+        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.draw_histograms); self.negative.changed.connect(self.draw_histograms)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
@@ -176,6 +179,9 @@ class MainWindow(QMainWindow):
         self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
         if saved := settings.data_folder(): self.folder = saved; self.refresh_files()
+        removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
+        if removed:
+            self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
         if getattr(sys, "frozen", False):
             QTimer.singleShot(0, self.check_packaged_release)
 
@@ -228,6 +234,13 @@ class MainWindow(QMainWindow):
     def set_show_tic(self, show):
         settings.set_show_tic(show)
         self.draw_uv()
+
+    def set_cache_expiry(self, days):
+        settings.set_cache_expiry_days(days)
+        removed = cleanup_expired_cache(settings.cache_folder(), days)
+        if removed:
+            self.refresh_cache_indicators()
+            self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
 
     def open_debug_terminal(self):
         terminal = shutil.which("x-terminal-emulator")

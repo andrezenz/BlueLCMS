@@ -44,6 +44,14 @@ def set_show_tic(show: bool) -> None:
     settings().setValue("show_tic", show)
 
 
+def cache_expiry_days() -> int:
+    return settings().value("cache_expiry_days", 7, type=int)
+
+
+def set_cache_expiry_days(days: int) -> None:
+    settings().setValue("cache_expiry_days", days)
+
+
 def integration_folder() -> Path:
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return data_home / "BlueLCMS" / "integrations"

@@ -1,6 +1,7 @@
 """Filesystem entry points for desktop-mounted remote shares on Linux."""
 
 import os
+import time
 import hashlib
 from pathlib import Path
 
@@ -45,3 +46,22 @@ def copy_to_cache(source: Path, cache: Path, progress=None) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return cache
+
+
+def cleanup_expired_cache(cache_folder: Path | None, expiry_days: int) -> int:
+    """Remove cache files older than expiry_days. Returns count of removed files."""
+    if cache_folder is None or expiry_days <= 0:
+        return 0
+    if not cache_folder.is_dir():
+        return 0
+    cutoff = time.time() - (expiry_days * 86400)
+    removed = 0
+    for item in cache_folder.iterdir():
+        if item.is_file() and not item.name.startswith("."):
+            try:
+                if item.stat().st_mtime < cutoff:
+                    item.unlink()
+                    removed += 1
+            except OSError:
+                pass
+    return removed
