@@ -1,5 +1,6 @@
 """Standalone Qt desktop entry point."""
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -286,17 +287,18 @@ class MainWindow(QMainWindow):
 
     def check_packaged_release(self, manual=False):
         version = QApplication.applicationVersion()
+        channel = os.environ.get("BLUELCMS_RELEASE_CHANNEL", "stable")
         if not manual and settings.settings().value("packaged_release_prompt", "", type=str) == version:
             return
-        self.submit(0, releases.latest_release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual))
+        self.submit(0, releases.release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual, channel), channel)
 
-    def packaged_release_ready(self, token, result, error, manual=False):
+    def packaged_release_ready(self, token, result, error, manual=False, channel="stable"):
         version = QApplication.applicationVersion()
         if not manual:
             settings.settings().setValue("packaged_release_prompt", version)
         if error or not result:
             if manual:
-                QMessageBox.warning(self, "Release check failed", "GitHub Releases could not be reached.")
+                QMessageBox.warning(self, "Release check failed", f"No {channel} release is currently available from GitHub.")
             return
         if result["tag"] == f"v{version}":
             if manual:
@@ -603,4 +605,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.5"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.6"); window = MainWindow(); window.show(); return app.exec()

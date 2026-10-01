@@ -3,5 +3,6 @@ Type=Application
 Name=BlueLCMS
 Comment=LC-MS and DAD data viewer
 Exec=BlueLCMS
+Icon=bluelcms
 Categories=Science;DataVisualization;
 Terminal=false

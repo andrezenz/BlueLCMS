@@ -29,8 +29,14 @@ jobs:
           python-version: "3.12"
       - name: Install build tools
         run: python -m pip install --upgrade pip pyinstaller .
+      - name: Configure development update channel
+        if: github.ref == 'refs/heads/dev'
+        run: cp packaging/runtime_hooks/development.py runtime-hook.py
+      - name: Configure stable update channel
+        if: github.ref != 'refs/heads/dev'
+        run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
-        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --paths src packaging/entrypoints/app.py
+        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/* package/ && tar -C package -czf dist/${{ matrix.artifact }} .
