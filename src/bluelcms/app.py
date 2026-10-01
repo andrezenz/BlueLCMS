@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
     QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
@@ -17,6 +17,7 @@ from . import settings
 from .folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
+from . import releases
 from .mzml import discover_files, file_display_name, load_run, mass_histograms
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
@@ -133,7 +134,11 @@ class MainWindow(QMainWindow):
         self.show_date_prefix.toggled.connect(self.set_show_date_prefix)
         menu.addAction(self.show_date_prefix)
         update_menu = self.menuBar().addMenu("Update")
-        for text, slot in (("Check for updates", self.check_updates), ("Update to dev", lambda: self.update_to("dev")), ("Update to stable", lambda: self.update_to("stable")), ("Select release version…", self.select_release)):
+        if getattr(sys, "frozen", False):
+            update_actions = (("Check GitHub releases", lambda: self.check_packaged_release(True)),)
+        else:
+            update_actions = (("Check for updates", self.check_updates), ("Update to dev", lambda: self.update_to("dev")), ("Update to stable", lambda: self.update_to("stable")), ("Select release version…", self.select_release))
+        for text, slot in update_actions:
             action = QAction(text, self); action.triggered.connect(slot); update_menu.addAction(action)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
         self.files.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -170,6 +175,8 @@ class MainWindow(QMainWindow):
         self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
         if saved := settings.data_folder(): self.folder = saved; self.refresh_files()
+        if getattr(sys, "frozen", False):
+            QTimer.singleShot(0, self.check_packaged_release)
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
@@ -276,6 +283,28 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Restart failed", "Restart BlueLCMS manually to use the updated version.")
         else:
             self.statusBar().showMessage("Update complete. Restart BlueLCMS to use the new version.")
+
+    def check_packaged_release(self, manual=False):
+        version = QApplication.applicationVersion()
+        if not manual and settings.settings().value("packaged_release_prompt", "", type=str) == version:
+            return
+        self.submit(0, releases.latest_release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual))
+
+    def packaged_release_ready(self, token, result, error, manual=False):
+        version = QApplication.applicationVersion()
+        if not manual:
+            settings.settings().setValue("packaged_release_prompt", version)
+        if error or not result:
+            if manual:
+                QMessageBox.warning(self, "Release check failed", "GitHub Releases could not be reached.")
+            return
+        if result["tag"] == f"v{version}":
+            if manual:
+                QMessageBox.information(self, "BlueLCMS is current", "This packaged version is the latest GitHub release.")
+            return
+        answer = QMessageBox.question(self, "BlueLCMS update available", f"GitHub release {result['tag']} is available. Open the download page?")
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(result["url"]))
 
     def cache_for(self, source):
         return cached_path(source, settings.cache_folder())
@@ -574,4 +603,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.3"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.4"); window = MainWindow(); window.show(); return app.exec()

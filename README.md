@@ -19,6 +19,17 @@ checkouts with local source changes, use only the official repository URL, and
 reinstall project dependencies before offering a restart. Application settings,
 raw data, caches, and integration sidecars are not changed by an update.
 
+## Installers
+
+Pushing a `v*` tag starts the GitHub Actions release workflow. It builds a
+Linux x86_64 archive, a macOS disk image, and a Windows installer on their
+native GitHub-hosted runners, then attaches them to the GitHub release. Packaged
+applications check GitHub Releases on their first launch and offer to open the
+latest release download page when a newer version is available.
+
+On Linux, extract the release archive and run `sh install.sh` from the extracted
+directory to install the application and desktop entry under `~/.local`.
+
 ## Install and run
 
 Python 3.12 or newer is required.

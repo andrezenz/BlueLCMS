@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=BlueLCMS
+Comment=LC-MS and DAD data viewer
+Exec=BlueLCMS
+Categories=Science;DataVisualization;
+Terminal=false
