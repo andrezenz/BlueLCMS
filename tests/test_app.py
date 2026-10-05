@@ -134,7 +134,7 @@ def test_cached_item_is_marked(tmp_path, monkeypatch):
         cache = window.cache_for(remote)
         cache.parent.mkdir(); cache.touch()
         window.refresh_cache_indicators()
-        assert item.toolTip() == "Cached locally"
+        assert item.toolTip() == "Cached locally (compact native-resolution cache)"
         window.set_download_state(remote, True)
         assert item.toolTip() == "Downloading remote source…"
     finally:

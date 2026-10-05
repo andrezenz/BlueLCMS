@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
     QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
@@ -31,6 +31,18 @@ def downloading_icon():
     painter = QPainter(canvas)
     style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload).paint(painter, 0, 0, 18, 18)
     style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown).paint(painter, 8, 8, 16, 16)
+    painter.end()
+    return QIcon(canvas)
+
+
+def compacted_icon():
+    style = QApplication.style()
+    canvas = QPixmap(24, 24); canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton).paint(painter, 0, 0, 18, 18)
+    painter.setPen(QPen(QColor("#58dce6"), 2))
+    for y in (15, 18, 21):
+        painter.drawLine(13, y, 22, y)
     painter.end()
     return QIcon(canvas)
 
@@ -318,11 +330,10 @@ class MainWindow(QMainWindow):
         return cached_path(source, settings.cache_folder())
 
     def refresh_cache_indicators(self):
-        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)
         for index in range(self.files.count()):
             item = self.files.item(index); cache = self.cache_for(item.data(Qt.ItemDataRole.UserRole))
-            item.setIcon(icon if cache and cache.is_file() else QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
-            item.setToolTip("Cached locally" if cache and cache.is_file() else "Remote source")
+            item.setIcon(compacted_icon() if cache and cache.is_file() else QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+            item.setToolTip("Cached locally (compact native-resolution cache)" if cache and cache.is_file() else "Remote source")
 
     def set_download_state(self, path, active):
         for index in range(self.files.count()):
