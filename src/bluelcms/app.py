@@ -35,6 +35,12 @@ def downloading_icon():
     return QIcon(canvas)
 
 
+def application_icon() -> QIcon:
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    icon = root / "bluelcms.svg" if getattr(sys, "frozen", False) else root / "packaging" / "linux" / "bluelcms.svg"
+    return QIcon(str(icon))
+
+
 class JobSignals(QObject):
     done = Signal(int, object, str)
     progress = Signal(int, int, int)
@@ -622,4 +628,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.6"); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.6"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()
