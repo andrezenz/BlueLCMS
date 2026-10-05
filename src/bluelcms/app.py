@@ -19,7 +19,7 @@ from .folders import cached_path, cleanup_expired_cache, copy_to_cache, is_afp_p
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
-from .mzml import discover_files, file_display_name, load_run, mass_histograms
+from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -586,8 +586,8 @@ class MainWindow(QMainWindow):
             if not pending:
                 self.histograms = collected; self.set_loading(False); self.draw_histograms()
                 start, end = self.uv.region.getRegion()
-                self.statusBar().showMessage(f"{start:.3f}–{end:.3f} min | MS1 intensity sums | 0.1 Th bins before pixel aggregation")
-        for path, run in self.runs.items(): self.submit(self.region_token, mass_histograms, lambda t, r, e, p=path: done(t, r, e, p), run, start, end)
+                self.statusBar().showMessage(f"{start:.3f}–{end:.3f} min | MS1 intensity sums | {self.display_bin_width:g} Th display bins")
+        for path, run in self.runs.items(): self.submit(self.region_token, mass_histograms, lambda t, r, e, p=path: done(t, r, e, p), run, start, end, NATIVE_BIN_WIDTH)
 
     def draw_histograms(self):
         for polarity, plot, title in (("+", self.positive, "Positive ions"), ("-", self.negative, "Negative ions")):
@@ -597,15 +597,17 @@ class MainWindow(QMainWindow):
             if full_x and (high < min(x.min() for x in full_x) or low > max(x.max() for x in full_x)):
                 plot.setXRange(min(x.min() for x in full_x), max(x.max() for x in full_x), padding=.03)
                 low, high = plot.getViewBox().viewRange()[0]
+            bin_width = display_bin_width(low, high, pixels)
             stacked = {}
             for index, result in enumerate(self.histograms.values()):
-                x, y = result[polarity]; bx, by, width = pixel_buckets(x, y, low, high, pixels); plot.data.append((x, y))
+                x, y = rebin_histogram(*result[polarity], bin_width); bx, by, width = pixel_buckets(x, y, low, high, pixels); plot.data.append((x, y))
                 if len(bx):
                     base = np.asarray([stacked.get(value, 0) for value in bx])
                     for value, height in zip(bx, by):
                         stacked[value] = stacked.get(value, 0) + height
                     plot.addItem(pg.BarGraphItem(x=bx, y0=base, height=by, width=width, brush=COLORS[index % len(COLORS)], pen=None))
             if not plot.data: plot.setTitle(f"{title} — no MS1 data in selection")
+            self.display_bin_width = bin_width
         self.label_peaks()
 
     def label_peaks(self):

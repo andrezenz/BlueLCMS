@@ -60,6 +60,7 @@ class Run:
 
 
 DATE_PREFIX = re.compile(r"^(\d{4}_\d{2}_\d{2})_?")
+NATIVE_BIN_WIDTH = 0.03125
 
 
 def file_display_name(path: Path, show_date_prefix: bool) -> str:
@@ -180,3 +181,24 @@ def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):
         bins, inverse = np.unique(np.floor(mz / bin_width), return_inverse=True)
         result[polarity] = ((bins + 0.5) * bin_width, np.bincount(inverse, weights=intensity))
     return result
+
+
+def display_bin_width(minimum: float, maximum: float, pixels: int) -> float:
+    """Choose a native-grid multiple wide enough for the current view."""
+    span = maximum - minimum
+    if not np.isfinite(span) or span <= 0 or pixels < 1:
+        return NATIVE_BIN_WIDTH
+    width = NATIVE_BIN_WIDTH
+    while width < span / pixels:
+        width *= 2
+    return width
+
+
+def rebin_histogram(x: np.ndarray, y: np.ndarray, bin_width: float) -> tuple[np.ndarray, np.ndarray]:
+    """Sum native histogram bins into zero-aligned display bins."""
+    if not np.isfinite(bin_width) or bin_width <= 0:
+        raise ValueError("Bin width must be finite and positive")
+    if not len(x):
+        return np.array([]), np.array([])
+    bins, inverse = np.unique(np.floor(x / bin_width), return_inverse=True)
+    return (bins + .5) * bin_width, np.bincount(inverse, weights=y)

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pyteomics.auxiliary import unitfloat
 
-from bluelcms.mzml import discover_files, file_display_name, load_run, mass_histograms, parse_spectra
+from bluelcms.mzml import display_bin_width, discover_files, file_display_name, load_run, mass_histograms, parse_spectra, rebin_histogram
 
 
 def spectrum(time=1, polarity="positive scan", level=1, **arrays):
@@ -61,6 +61,14 @@ def test_ms1_polarity_inclusive_interval_and_weights():
     assert not len(mass_histograms(run, 10, 11)["+"][0])
     with pytest.raises(ValueError):
         mass_histograms(run, 1, 2, 0)
+
+
+def test_display_bins_retain_native_detail_when_zoomed():
+    assert display_bin_width(100, 1500, 1000) == 2
+    assert display_bin_width(100, 100.5, 1000) == 0.03125
+    x, y = rebin_histogram(np.array([100.015625, 100.046875]), np.array([2, 3]), 0.0625)
+    np.testing.assert_allclose(x, [100.03125])
+    np.testing.assert_equal(y, [5])
 
 
 def test_time_units_and_invalid_arrays():

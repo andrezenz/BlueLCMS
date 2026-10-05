@@ -47,7 +47,7 @@ def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
         # The shared x range follows positive data; off-screen negative bins are
         # not drawn until panned into view, but no visible bin is dropped.
         np.testing.assert_equal(negative_bars[0].opts["height"], [3, 5])
-        assert "0.1 Th bins" in window.statusBar().currentMessage()
+        assert "Th display bins" in window.statusBar().currentMessage()
         # A stale load must never overwrite a newer file selection.
         window.loaded(window.load_token - 1, path, None, "stale failure")
         assert window.run_data is not None
