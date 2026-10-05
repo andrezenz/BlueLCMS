@@ -1,6 +1,7 @@
 """Synthetic data only: no vendor or SynthesisMapper fixtures."""
 
 import base64
+import gzip
 
 import numpy as np
 import pytest
@@ -17,11 +18,11 @@ def spectrum(time=1, polarity="positive scan", level=1, **arrays):
 
 
 def test_discovery(tmp_path):
-    for name in ("2026_01_01_old.mzML", "2026_09_30_new.mzML", "z.mzML", "A.MZML", "ignore.txt"):
+    for name in ("2026_01_01_old.mzML", "2026_09_30_new.mzML", "z.mzML", "A.MZML", "compressed.gz", "ignore.txt"):
         (tmp_path / name).touch()
     (tmp_path / "directory.mzml").mkdir()
     paths = discover_files(tmp_path)
-    assert [p.name for p in paths] == ["2026_09_30_new.mzML", "2026_01_01_old.mzML", "A.MZML", "z.mzML"]
+    assert [p.name for p in paths] == ["2026_09_30_new.mzML", "2026_01_01_old.mzML", "A.MZML", "compressed.gz", "z.mzML"]
     assert file_display_name(paths[0], False) == "new.mzML"
     assert file_display_name(paths[0], True) == "2026_09_30_new.mzML"
 
@@ -137,3 +138,14 @@ def test_real_mzml_decoding(tmp_path):
     assert progress[-1] == (path.stat().st_size, path.stat().st_size)
     assert [(scan.time, scan.wavelength.tolist()) for scan in dad] == [(1, [250.0, 254.0, 260.0])]
     assert [scan.intensity.sum() for scan in ms_scans] == [12, 15]
+
+
+def test_gzip_mzml_decoding_and_compressed_progress(tmp_path):
+    source = write_mzml(tmp_path / "sample.mzML")
+    compressed = tmp_path / "sample.gz"
+    with source.open("rb") as input_file, gzip.open(compressed, "wb") as output_file:
+        output_file.write(input_file.read())
+    progress = []
+    run = load_run(compressed, progress=lambda copied, total: progress.append((copied, total)))
+    assert [scan.polarity for scan in run.scans] == ["+", "-"]
+    assert progress[-1] == (compressed.stat().st_size, compressed.stat().st_size)

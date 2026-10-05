@@ -1,6 +1,7 @@
 """Qt-independent mzML loading and intensity-weighted MS1 aggregation."""
 
 from dataclasses import dataclass
+import gzip
 from pathlib import Path
 import re
 
@@ -69,12 +70,12 @@ def file_display_name(path: Path, show_date_prefix: bool) -> str:
 
 
 def discover_files(folder: Path) -> list[Path]:
-    """List files newest-first when their names start with yyyy_mm_dd."""
+    """List mzML files and gzip-compressed mzML files newest-first."""
     def order(path):
         match = DATE_PREFIX.match(path.name)
         return (0, -int(match.group(1).replace("_", "")), path.name.casefold()) if match else (1, 0, path.name.casefold())
     return sorted(
-        (p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".mzml"),
+        (p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in {".mzml", ".gz"}),
         key=order,
     )
 
@@ -154,10 +155,16 @@ def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
     if progress is None:
+        if path.suffix.lower() == ".gz":
+            with path.open("rb") as file, gzip.GzipFile(fileobj=file) as compressed, MzML(compressed, use_index=False) as reader:
+                return parse_spectra(reader, wavelength, dad_callback, scan_callback)
         with MzML(str(path), use_index=False) as reader:
             return parse_spectra(reader, wavelength, dad_callback, scan_callback)
     with path.open("rb") as file:
         reader_source = ProgressReader(file, progress)
+        if path.suffix.lower() == ".gz":
+            with gzip.GzipFile(fileobj=reader_source) as compressed, MzML(compressed, use_index=False) as reader:
+                return parse_spectra(reader, wavelength, dad_callback, scan_callback)
         with MzML(reader_source, use_index=False) as reader:
             return parse_spectra(reader, wavelength, dad_callback, scan_callback)
 

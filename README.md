@@ -75,7 +75,8 @@ updates the existing shortcut. To remove the shortcut, delete
 ### Viewing data
 
 1. Use **Settings → Choose mzML folder…**. The folder is remembered between
-   sessions. Files directly in that folder appear in the sidebar; `.mzML`
+   sessions. Files directly in that folder appear in the sidebar; `.mzML` and
+   gzip-compressed `.gz` mzML files are supported.
    extensions are matched case-insensitively. Use **Refresh file list** after
    adding files.
    Files beginning with `yyyy_mm_dd` sort newest first. Toggle **Settings →
