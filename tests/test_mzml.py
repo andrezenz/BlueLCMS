@@ -138,6 +138,7 @@ def test_real_mzml_decoding(tmp_path):
     assert progress[-1] == (path.stat().st_size, path.stat().st_size)
     assert [(scan.time, scan.wavelength.tolist()) for scan in dad] == [(1, [250.0, 254.0, 260.0])]
     assert [scan.intensity.sum() for scan in ms_scans] == [12, 15]
+    assert run.scans[0].mz.dtype == np.float32
 
 
 def test_gzip_mzml_decoding_and_compressed_progress(tmp_path):
@@ -149,3 +150,11 @@ def test_gzip_mzml_decoding_and_compressed_progress(tmp_path):
     run = load_run(compressed, progress=lambda copied, total: progress.append((copied, total)))
     assert [scan.polarity for scan in run.scans] == ["+", "-"]
     assert progress[-1] == (compressed.stat().st_size, compressed.stat().st_size)
+
+
+def test_matching_scan_axes_are_shared_in_memory():
+    run = parse_spectra([
+        spectrum(time=1, **{"m/z array": [100, 100.03125], "intensity array": [3, 7]}),
+        spectrum(time=2, **{"m/z array": [100, 100.03125], "intensity array": [5, 11]}),
+    ])
+    assert run.scans[0].mz is run.scans[1].mz

@@ -94,18 +94,20 @@ def retention_time(spectrum: dict) -> float | None:
 
 
 def paired_arrays(record: dict, axis: str) -> tuple[np.ndarray, np.ndarray]:
-    x = np.asarray(record.get(axis, []), dtype=float)
-    y = np.asarray(record.get("intensity array", []), dtype=float)
+    x = np.asarray(record.get(axis, []), dtype=np.float32)
+    y = np.asarray(record.get("intensity array", []), dtype=np.float32)
     if x.ndim != 1 or y.ndim != 1 or len(x) != len(y):
         raise ValueError(f"Invalid {axis} / intensity arrays in {record.get('id', 'spectrum')}")
     valid = np.isfinite(x) & np.isfinite(y)
-    return x[valid], y[valid]
+    return (x, y) if valid.all() else (x[valid], y[valid])
 
 
 def parse_spectra(spectra, wavelength: float = 254.0, dad_callback=None, scan_callback=None) -> Run:
     dad = []
     scans = []
     skipped = 0
+    shared_wavelength = None
+    shared_mz = None
     for spectrum in spectra:
         time = retention_time(spectrum)
         if "wavelength array" in spectrum:
@@ -114,6 +116,10 @@ def parse_spectra(spectra, wavelength: float = 254.0, dad_callback=None, scan_ca
             axis, intensity = paired_arrays(spectrum, "wavelength array")
             # mzML wavelength arrays use nanometers (MS:1000617).
             if len(axis):
+                if shared_wavelength is None:
+                    shared_wavelength = axis
+                elif np.array_equal(axis, shared_wavelength):
+                    axis = shared_wavelength
                 scan = DADScan(time, axis, intensity)
                 dad.append(scan)
                 if dad_callback:
@@ -126,7 +132,12 @@ def parse_spectra(spectra, wavelength: float = 254.0, dad_callback=None, scan_ca
                 continue
             mz, intensity = paired_arrays(spectrum, "m/z array")
             valid = (mz > 0) & (intensity >= 0)
-            scan = Scan(time, "+" if positive else "-", mz[valid], intensity[valid])
+            mz, intensity = mz[valid], intensity[valid]
+            if shared_mz is None:
+                shared_mz = mz
+            elif np.array_equal(mz, shared_mz):
+                mz = shared_mz
+            scan = Scan(time, "+" if positive else "-", mz, intensity)
             scans.append(scan)
             if scan_callback:
                 scan_callback(scan)
