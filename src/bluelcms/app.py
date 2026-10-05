@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
-from .folders import cached_path, cleanup_expired_cache, copy_to_cache, is_afp_path, remote_mount_roots
+from .folders import cached_path, cleanup_expired_cache, is_afp_path, remote_mount_roots
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
-from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram
+from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -56,17 +56,6 @@ class Job(QRunnable):
     def run(self):
         try: self.signals.done.emit(self.token, self.function(*self.args), "")
         except Exception as error: self.signals.done.emit(self.token, None, str(error))
-
-
-class CopyJob(Job):
-    def run(self):
-        try:
-            result = copy_to_cache(self.args[0], self.args[1],
-                                   lambda copied, total: self.signals.progress.emit(self.token, copied, total))
-        except Exception as error:
-            self.signals.done.emit(self.token, None, str(error))
-        else:
-            self.signals.done.emit(self.token, result, "")
 
 
 class LoadJob(Job):
@@ -119,6 +108,8 @@ class MainWindow(QMainWindow):
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
         self.stream_timer = QTimer(self); self.stream_timer.setSingleShot(True); self.stream_timer.setInterval(75); self.stream_timer.timeout.connect(self.draw_uv)
+        self.histogram_redraw = QTimer(self); self.histogram_redraw.setSingleShot(True); self.histogram_redraw.setInterval(40); self.histogram_redraw.timeout.connect(self.draw_histograms)
+        self.drawing_histograms = False
         self.progress = QProgressBar(); self.progress.setFixedWidth(260); self.progress.setTextVisible(True); self.progress.hide()
         self.statusBar().addPermanentWidget(self.progress)
         toolbar = QToolBar("Display", self)
@@ -159,7 +150,7 @@ class MainWindow(QMainWindow):
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
-        self.negative.setXLink(self.positive); self.positive.changed.connect(self.draw_histograms); self.negative.changed.connect(self.draw_histograms)
+        self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
         root = QSplitter(Qt.Orientation.Horizontal); root.addWidget(controls); root.addWidget(plots); root.setStretchFactor(1, 1); root.setSizes([250, 1000]); self.setCentralWidget(root)
@@ -193,14 +184,6 @@ class MainWindow(QMainWindow):
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
-
-    def submit_copy(self, token, source, cache):
-        job = CopyJob(token, copy_to_cache, source, cache)
-        self.jobs.add(job)
-        job.signals.progress.connect(lambda t, copied, total, p=source: self.cache_progress(t, p, copied, total))
-        job.signals.done.connect(lambda t, result, error, p=source: self.cached(t, p, result, error))
-        job.signals.done.connect(lambda *_: self.jobs.discard(job))
-        self.pool.start(job)
 
     def submit_load(self, token, path, source, callback):
         job = LoadJob(token, source, self.wavelength.value())
@@ -395,7 +378,8 @@ class MainWindow(QMainWindow):
         self.run_data = run
         cache = self.cache_for(path)
         if cache and not cache.is_file():
-            self.submit_copy(token, path, cache)
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {path.name}…"); self.progress.show()
+            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache)
         else:
             self.set_download_state(path, False)
             self.progress.hide()
@@ -503,11 +487,6 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.statusBar().showMessage(f"Cached {path.name} locally")
 
-    def cache_progress(self, token, path, copied, total):
-        if token != self.load_token:
-            return
-        self.show_progress("Caching", path, copied, total)
-
     def show_progress(self, action, path, copied, total):
         if total:
             percent = round(copied * 100 / total)
@@ -589,7 +568,20 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"{start:.3f}–{end:.3f} min | MS1 intensity sums | {self.display_bin_width:g} Th display bins")
         for path, run in self.runs.items(): self.submit(self.region_token, mass_histograms, lambda t, r, e, p=path: done(t, r, e, p), run, start, end, NATIVE_BIN_WIDTH)
 
+    def schedule_histogram_draw(self):
+        if self.histograms and not self.drawing_histograms:
+            self.histogram_redraw.start()
+
     def draw_histograms(self):
+        if self.drawing_histograms:
+            return
+        self.drawing_histograms = True
+        try:
+            self._draw_histograms()
+        finally:
+            self.drawing_histograms = False
+
+    def _draw_histograms(self):
         for polarity, plot, title in (("+", self.positive, "Positive ions"), ("-", self.negative, "Negative ions")):
             plot.clear(); plot.data = []; plot.setTitle(title)
             low, high = plot.getViewBox().viewRange()[0]; pixels = max(1, int(plot.getViewBox().width()))

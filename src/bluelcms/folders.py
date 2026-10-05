@@ -26,7 +26,7 @@ def cached_path(source: Path, cache_folder: Path | None) -> Path | None:
     if cache_folder is None or not is_afp_path(source):
         return None
     identity = hashlib.sha256(str(source).encode()).hexdigest()[:16]
-    return cache_folder / f"{source.stem}-{identity}{source.suffix}"
+    return cache_folder / f"{source.stem}-{identity}.bluelcms.npz"
 
 
 def copy_to_cache(source: Path, cache: Path, progress=None) -> Path:

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pyteomics.auxiliary import unitfloat
 
-from bluelcms.mzml import display_bin_width, discover_files, file_display_name, load_run, mass_histograms, parse_spectra, rebin_histogram
+from bluelcms.mzml import display_bin_width, discover_files, file_display_name, load_compact_cache, load_run, mass_histograms, parse_spectra, rebin_histogram, write_compact_cache
 
 
 def spectrum(time=1, polarity="positive scan", level=1, **arrays):
@@ -69,6 +69,27 @@ def test_display_bins_retain_native_detail_when_zoomed():
     x, y = rebin_histogram(np.array([100.015625, 100.046875]), np.array([2, 3]), 0.0625)
     np.testing.assert_allclose(x, [100.03125])
     np.testing.assert_equal(y, [5])
+
+
+def test_compact_cache_preserves_native_scans(tmp_path):
+    run = parse_spectra([spectrum(time=1, **{"wavelength array": [250, 254], "intensity array": [2, 5]}), spectrum(time=2, **{"m/z array": [100, 100.03125], "intensity array": [3, 7]})])
+    cache = write_compact_cache(run, tmp_path / "sample.bluelcms.npz")
+    loaded = load_compact_cache(cache)
+    assert loaded.scans[0].polarity == "+"
+    np.testing.assert_allclose(loaded.scans[0].mz, [100, 100.03125])
+    np.testing.assert_allclose(loaded.scans[0].intensity, [3, 7])
+    np.testing.assert_allclose(loaded.dad[0].wavelength, [250, 254])
+
+
+def test_compact_cache_preserves_variable_axes(tmp_path):
+    run = parse_spectra([
+        spectrum(time=1, **{"m/z array": [100, 100.03125], "intensity array": [3, 7]}),
+        spectrum(time=2, polarity="negative scan", **{"m/z array": [200], "intensity array": [11]}),
+    ])
+    loaded = load_compact_cache(write_compact_cache(run, tmp_path / "variable.bluelcms.npz"))
+    assert [scan.polarity for scan in loaded.scans] == ["+", "-"]
+    np.testing.assert_allclose(loaded.scans[1].mz, [200])
+    np.testing.assert_allclose(loaded.scans[1].intensity, [11])
 
 
 def test_time_units_and_invalid_arrays():

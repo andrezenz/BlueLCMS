@@ -61,6 +61,7 @@ class Run:
 
 DATE_PREFIX = re.compile(r"^(\d{4}_\d{2}_\d{2})_?")
 NATIVE_BIN_WIDTH = 0.03125
+COMPACT_CACHE_FORMAT = "bluelcms-compact-v1"
 
 
 def file_display_name(path: Path, show_date_prefix: bool) -> str:
@@ -148,6 +149,8 @@ class ProgressReader:
 
 
 def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=None, scan_callback=None) -> Run:
+    if path.name.endswith(".bluelcms.npz"):
+        return load_compact_cache(path, dad_callback, scan_callback)
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
     if progress is None:
@@ -157,6 +160,62 @@ def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=
         reader_source = ProgressReader(file, progress)
         with MzML(reader_source, use_index=False) as reader:
             return parse_spectra(reader, wavelength, dad_callback, scan_callback)
+
+
+def _pack_scans(scans, axis_name: str):
+    axes = [getattr(scan, axis_name) for scan in scans]
+    shared = bool(axes) and all(np.array_equal(axis, axes[0]) for axis in axes[1:])
+    values = [scan.intensity.astype(np.float32, copy=False) for scan in scans]
+    if shared:
+        return {"shared": np.array(True), "axis": axes[0].astype(np.float32, copy=False), "intensity": np.stack(values)}
+    offsets = np.cumsum([0, *[len(axis) for axis in axes]], dtype=np.int64)
+    return {"shared": np.array(False), "offsets": offsets, "axis": np.concatenate(axes).astype(np.float32), "intensity": np.concatenate(values)}
+
+
+def _unpack_scans(data, prefix: str, times, constructor, extra=None):
+    shared = bool(data[f"{prefix}_shared"])
+    if shared:
+        axis = data[f"{prefix}_axis"]
+        values = data[f"{prefix}_intensity"]
+        return tuple(constructor(time, axis.copy(), intensity, *(() if extra is None else (extra[index],))) for index, (time, intensity) in enumerate(zip(times, values)))
+    offsets, axes, values = data[f"{prefix}_offsets"], data[f"{prefix}_axis"], data[f"{prefix}_intensity"]
+    return tuple(constructor(time, axes[offsets[index]:offsets[index + 1]], values[offsets[index]:offsets[index + 1]], *(() if extra is None else (extra[index],))) for index, time in enumerate(times))
+
+
+def write_compact_cache(run: Run, path: Path) -> Path:
+    """Persist only data BlueLCMS needs, using float32 arrays and zlib compression."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.part")
+    dad = _pack_scans(run.dad, "wavelength") if run.dad else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
+    ms = _pack_scans(run.scans, "mz") if run.scans else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
+    payload = {
+        "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
+        "dad_times": np.asarray([scan.time for scan in run.dad]), "dad_shared": dad["shared"], "dad_axis": dad["axis"], "dad_intensity": dad["intensity"],
+        "ms_times": np.asarray([scan.time for scan in run.scans]), "ms_polarity": np.asarray([scan.polarity for scan in run.scans]), "ms_shared": ms["shared"], "ms_axis": ms["axis"], "ms_intensity": ms["intensity"],
+    }
+    if not bool(dad["shared"]): payload["dad_offsets"] = dad["offsets"]
+    if not bool(ms["shared"]): payload["ms_offsets"] = ms["offsets"]
+    try:
+        with temporary.open("wb") as output:
+            np.savez_compressed(output, **payload)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
+def load_compact_cache(path: Path, dad_callback=None, scan_callback=None) -> Run:
+    with np.load(path, allow_pickle=False) as data:
+        if str(data["format"]) != COMPACT_CACHE_FORMAT:
+            raise ValueError("Unsupported BlueLCMS cache format")
+        dad = _unpack_scans(data, "dad", data["dad_times"], lambda time, axis, intensity: DADScan(float(time), axis, intensity))
+        scans = _unpack_scans(data, "ms", data["ms_times"], lambda time, axis, intensity, polarity: Scan(float(time), str(polarity), axis, intensity), data["ms_polarity"])
+        skipped = int(data["skipped_scans"])
+    if dad_callback:
+        for scan in dad: dad_callback(scan)
+    if scan_callback:
+        for scan in scans: scan_callback(scan)
+    return Run(dad, scans, skipped)
 
 
 
@@ -172,14 +231,18 @@ def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):
     start, end = sorted((start, end))
     result = {}
     for polarity in ("+", "-"):
-        selected = [s for s in run.scans if s.polarity == polarity and start <= s.time <= end]
+        selected = [s for s in run.scans if s.polarity == polarity and start <= s.time <= end and len(s.mz)]
         if not selected:
             result[polarity] = (np.array([]), np.array([]))
             continue
-        mz = np.concatenate([s.mz for s in selected])
-        intensity = np.concatenate([s.intensity for s in selected])
-        bins, inverse = np.unique(np.floor(mz / bin_width), return_inverse=True)
-        result[polarity] = ((bins + 0.5) * bin_width, np.bincount(inverse, weights=intensity))
+        lower = min(int(np.floor(scan.mz.min() / bin_width)) for scan in selected if len(scan.mz))
+        upper = max(int(np.floor(scan.mz.max() / bin_width)) for scan in selected if len(scan.mz))
+        sums = np.zeros(upper - lower + 1)
+        for scan in selected:
+            bins = np.floor(scan.mz / bin_width).astype(int) - lower
+            sums += np.bincount(bins, weights=scan.intensity, minlength=len(sums))
+        occupied = np.flatnonzero(sums)
+        result[polarity] = ((occupied + lower + 0.5) * bin_width, sums[occupied])
     return result
 
 

@@ -42,6 +42,7 @@ def test_afp_cache_has_unique_atomic_local_copy(tmp_path):
     cache = cached_path(source, cache_root)
     assert is_afp_path(source)
     assert cache.parent == cache_root
+    assert cache.name.endswith(".bluelcms.npz")
     assert cache != cached_path(tmp_path / "gvfs" / "afp-volume:host=other,volume=LC" / "sample.mzML", cache_root)
     progress = []
     assert copy_to_cache(source, cache, lambda copied, total: progress.append((copied, total))) == cache

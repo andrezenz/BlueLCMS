@@ -151,17 +151,22 @@ visible there after that instance exits. This is interactive diagnostics only;
 
 Choose **Settings → Choose local cache folder…** to select a persistent local
 folder for AFP mzML caches. After an AFP-backed file has fully loaded,
-⌊Blue⌋ LCMS copies it to that folder in the background. Later selections use the
-local copy instead of reading the AFP share. A save icon and **Cached locally**
-tooltip identify cached entries in the sidebar. Cache entries use an atomic
-copy and include a hash of the full remote path, so equal filenames from
+⌊Blue⌋ LCMS writes a compact local analysis cache in the background. It retains
+full DAD spectra plus native-grid MS1 intensities, scan times, and polarities,
+while omitting unused mzML XML and metadata. Later selections use that local
+cache instead of reading the AFP share. A save icon and **Cached locally**
+tooltip identify cached entries in the sidebar. Cache entries are written
+atomically and include a hash of the full remote path, so equal filenames from
 different shares cannot collide. Re-selecting the cache folder or deleting its
 file makes the next load use the remote source again.
 
 The graphs visibly grey out with an animated loading label while a file is
 parsed. A persistent status-bar progress bar reports bytes read against the
-selected file's size. After a remote parse succeeds, it switches to byte-based
-progress for the copy into the local cache.
+selected file's size. After a remote parse succeeds, it switches to compacting
+the local cache.
+
+Set **Cache expiry** in the left sidebar to remove cached entries after a chosen
+number of days; the default is seven days and zero disables automatic expiry.
 
 For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The
