@@ -147,14 +147,14 @@ inside the system terminal. Python tracebacks and other standard output remain
 visible there after that instance exits. This is interactive diagnostics only;
 ⌊Blue⌋ LCMS does not write log files.
 
-### AFP local cache
+### Local analysis cache
 
 Choose **Settings → Choose local cache folder…** to select a persistent local
-folder for AFP mzML caches. After an AFP-backed file has fully loaded,
+folder for compact mzML analysis caches. After a file has fully loaded,
 ⌊Blue⌋ LCMS writes a compact local analysis cache in the background. It retains
 full DAD spectra plus native-grid MS1 intensities, scan times, and polarities,
 while omitting unused mzML XML and metadata. Later selections use that local
-cache instead of reading the AFP share. A save icon and **Cached locally**
+cache instead of reading the original mzML. A save icon and **Cached locally**
 tooltip identify cached entries in the sidebar. Cache entries are written
 atomically and include a hash of the full remote path, so equal filenames from
 different shares cannot collide. Re-selecting the cache folder or deleting its

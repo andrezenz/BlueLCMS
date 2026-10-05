@@ -49,7 +49,7 @@ def test_afp_cache_has_unique_atomic_local_copy(tmp_path):
     assert cache.read_bytes() == b"mzML data"
     assert progress == [(len(b"mzML data"), len(b"mzML data"))]
     assert not list(cache_root.glob("*.part"))
-    assert cached_path(tmp_path / "local.mzML", cache_root) is None
+    assert cached_path(tmp_path / "local.mzML", cache_root) is not None
 
 
 def test_cache_folder_setting(tmp_path, monkeypatch):

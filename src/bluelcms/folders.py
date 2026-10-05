@@ -23,7 +23,7 @@ def is_afp_path(path: Path) -> bool:
 
 
 def cached_path(source: Path, cache_folder: Path | None) -> Path | None:
-    if cache_folder is None or not is_afp_path(source):
+    if cache_folder is None:
         return None
     identity = hashlib.sha256(str(source).encode()).hexdigest()[:16]
     return cache_folder / f"{source.stem}-{identity}.bluelcms.npz"
