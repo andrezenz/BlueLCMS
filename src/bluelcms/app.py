@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
-from .folders import cached_path, cleanup_expired_cache, is_afp_path, remote_mount_roots
+from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path, remote_mount_roots
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
@@ -197,10 +197,10 @@ class MainWindow(QMainWindow):
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
 
-    def submit_load(self, token, path, source, callback):
+    def submit_load(self, token, path, source, source_label, callback):
         job = LoadJob(token, source, self.wavelength.value())
         self.jobs.add(job)
-        job.signals.progress.connect(lambda t, copied, total, p=source: self.load_progress(t, p, copied, total))
+        job.signals.progress.connect(lambda t, copied, total, p=path, label=source_label: self.load_progress(t, p, label, copied, total))
         job.signals.uv_points.connect(lambda t, points, p=path: self.streamed_uv_points(t, p, points))
         job.signals.tic_points.connect(lambda t, points, p=path: self.streamed_tic_points(t, p, points))
         job.signals.done.connect(callback)
@@ -221,10 +221,10 @@ class MainWindow(QMainWindow):
 
     def choose_cache_folder(self):
         initial = settings.cache_folder() or Path.home()
-        if folder := QFileDialog.getExistingDirectory(self, "Choose local AFP mzML cache folder", str(initial)):
+        if folder := QFileDialog.getExistingDirectory(self, "Choose local mzML cache folder", str(initial)):
             settings.set_cache_folder(Path(folder))
             self.refresh_cache_indicators()
-            self.statusBar().showMessage(f"AFP cache folder: {folder}")
+            self.statusBar().showMessage(f"mzML cache folder: {folder}")
 
     def set_show_date_prefix(self, show):
         settings.set_show_date_prefix(show)
@@ -329,11 +329,23 @@ class MainWindow(QMainWindow):
     def cache_for(self, source):
         return cached_path(source, settings.cache_folder())
 
+    def legacy_cache_for(self, source):
+        return legacy_cached_path(source, settings.cache_folder())
+
+    def load_source_label(self, path, source):
+        if source == path:
+            return "original remote mzML" if is_afp_path(path) else "original local mzML"
+        return "compact local cache" if source.name.endswith(".bluelcms.npz") else "cached mzML"
+
     def refresh_cache_indicators(self):
         for index in range(self.files.count()):
-            item = self.files.item(index); cache = self.cache_for(item.data(Qt.ItemDataRole.UserRole))
-            item.setIcon(compacted_icon() if cache and cache.is_file() else QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
-            item.setToolTip("Cached locally (compact native-resolution cache)" if cache and cache.is_file() else "Remote source")
+            item = self.files.item(index); path = item.data(Qt.ItemDataRole.UserRole); cache = self.cache_for(path); legacy = self.legacy_cache_for(path)
+            if cache and cache.is_file():
+                item.setIcon(compacted_icon()); item.setToolTip("Cached locally (compact native-resolution cache)")
+            elif legacy and legacy.is_file():
+                item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)); item.setToolTip("Cached locally (mzML copy)")
+            else:
+                item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)); item.setToolTip("Original source")
 
     def set_download_state(self, path, active):
         for index in range(self.files.count()):
@@ -368,12 +380,14 @@ class MainWindow(QMainWindow):
         if missing: self.set_loading(True)
         for path in missing:
             cache = self.cache_for(path)
-            source = cache if cache and cache.is_file() else path
+            legacy = self.legacy_cache_for(path)
+            source = cache if cache and cache.is_file() else legacy if legacy and legacy.is_file() else path
+            source_label = self.load_source_label(path, source)
             self.set_download_state(path, source == path and is_afp_path(path))
             size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
-            self.statusBar().showMessage(f"Loading {path.name} ({size:.1f} MiB)…")
-            self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {path.name}…"); self.progress.show()
-            self.submit_load(token, path, source, lambda t, r, e, p=path: self.loaded(t, p, r, e))
+            self.statusBar().showMessage(f"Loading {source_label}: {path.name} ({size:.1f} MiB)…")
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {source_label}…"); self.progress.show()
+            self.submit_load(token, path, source, source_label, lambda t, r, e, p=path: self.loaded(t, p, r, e))
         self.draw_uv(); self.timer.start()
 
     def loaded(self, token, path, run, error):
@@ -481,10 +495,10 @@ class MainWindow(QMainWindow):
         if not self.stream_timer.isActive():
             self.stream_timer.start()
 
-    def load_progress(self, token, path, copied, total):
+    def load_progress(self, token, path, source_label, copied, total):
         if token != self.load_token:
             return
-        self.show_progress("Loading", path, copied, total)
+        self.show_progress(f"Loading {source_label}", path, copied, total)
 
     def cached(self, token, path, cache, error):
         if token != self.load_token:

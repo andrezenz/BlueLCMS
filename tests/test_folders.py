@@ -1,4 +1,4 @@
-from bluelcms.folders import cached_path, copy_to_cache, is_afp_path, remote_mount_roots
+from bluelcms.folders import cached_path, copy_to_cache, is_afp_path, legacy_cached_path, remote_mount_roots
 from bluelcms.mzml import discover_files
 from bluelcms import settings
 from PySide6.QtCore import QSettings
@@ -42,6 +42,7 @@ def test_afp_cache_has_unique_atomic_local_copy(tmp_path):
     cache = cached_path(source, cache_root)
     assert is_afp_path(source)
     assert cache.parent == cache_root
+    assert legacy_cached_path(source, cache_root).suffix == ".mzML"
     assert cache.name.endswith(".bluelcms.npz")
     assert cache != cached_path(tmp_path / "gvfs" / "afp-volume:host=other,volume=LC" / "sample.mzML", cache_root)
     progress = []

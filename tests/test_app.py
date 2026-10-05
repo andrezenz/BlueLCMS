@@ -130,7 +130,7 @@ def test_cached_item_is_marked(tmp_path, monkeypatch):
         item.setData(Qt.ItemDataRole.UserRole, remote)
         window.files.addItem(item)
         window.refresh_cache_indicators()
-        assert item.toolTip() == "Remote source"
+        assert item.toolTip() == "Original source"
         cache = window.cache_for(remote)
         cache.parent.mkdir(); cache.touch()
         window.refresh_cache_indicators()
@@ -161,11 +161,11 @@ def test_byte_progress_and_loading_overlay_are_visible():
     window.show()
     try:
         window.load_token = 7
-        window.load_progress(7, Path(__file__), 50, 100)
+        window.load_progress(7, Path(__file__), "original local mzML", 50, 100)
         app.processEvents()
         assert window.progress.isVisible()
         assert window.progress.value() == 50
-        assert window.progress.format() == "Loading 50%"
+        assert window.progress.format() == "Loading original local mzML 50%"
         window.set_loading(True)
         assert not window.uv.isEnabled()
         assert "#6a6a6a" in window.uv.styleSheet()
