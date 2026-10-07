@@ -17,6 +17,21 @@ def data_folder() -> Path | None:
 
 def set_data_folder(path: Path) -> None:
     settings().setValue("data_folder", str(path.resolve()))
+    set_data_folders([path])
+
+
+def data_folders() -> list[Path]:
+    values = settings().value("data_folders", [])
+    if isinstance(values, str):
+        values = [values]
+    folders = [Path(value) for value in values if value]
+    return folders or ([data_folder()] if data_folder() else [])
+
+
+def set_data_folders(paths: list[Path]) -> None:
+    unique = list(dict.fromkeys(str(path.resolve()) for path in paths))
+    settings().setValue("data_folders", unique)
+    settings().setValue("data_folder", unique[0] if unique else "")
 
 
 def cache_folder() -> Path | None:

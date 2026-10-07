@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QT
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
-    QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
+    QDialog, QDialogButtonBox, QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
     QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
@@ -107,12 +107,36 @@ class LoadJob(Job):
             self.signals.done.emit(self.token, result, "")
 
 
+class LocationsDialog(QDialog):
+    def __init__(self, locations, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("mzML locations")
+        self.resize(620, 320)
+        self.locations = QListWidget()
+        self.locations.addItems([str(path) for path in locations])
+        add = QPushButton("Add folder…"); add.clicked.connect(self.add_folder)
+        remove = QPushButton("Remove selected"); remove.clicked.connect(lambda: self.locations.takeItem(self.locations.currentRow()))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self); layout.addWidget(QLabel("Files from all listed folders appear together in the sidebar.")); layout.addWidget(self.locations)
+        actions = QHBoxLayout(); actions.addWidget(add); actions.addWidget(remove); actions.addStretch(); layout.addLayout(actions); layout.addWidget(buttons)
+
+    def add_folder(self):
+        if folder := QFileDialog.getExistingDirectory(self, "Add mzML folder", str(Path.home())):
+            if folder not in [self.locations.item(index).text() for index in range(self.locations.count())]:
+                self.locations.addItem(folder)
+
+    def selected_locations(self):
+        return [Path(self.locations.item(index).text()) for index in range(self.locations.count())]
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("⌊Blue⌋ LCMS")
         self.resize(1250, 850)
-        self.folder = None
+        self.folders = settings.data_folders()
+        self.folder = self.folders[0] if self.folders else None
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.integrations, self.integration_source = [], None
         self.load_token = self.region_token = self.folder_token = 0
@@ -132,7 +156,7 @@ class MainWindow(QMainWindow):
         self.show_tic.toggled.connect(self.set_show_tic)
         toolbar.addAction(self.show_tic)
         menu = self.menuBar().addMenu("Settings")
-        for text, slot in (("Choose mzML folder…", self.choose_folder),
+        for text, slot in (("Manage mzML locations…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
                            ("Choose local cache folder…", self.choose_cache_folder),
                            ("Open debug terminal…", self.open_debug_terminal),
@@ -187,7 +211,7 @@ class MainWindow(QMainWindow):
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
         self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
-        if saved := settings.data_folder(): self.folder = saved; self.refresh_files()
+        if self.folders: self.refresh_files()
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
         if removed:
             self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
@@ -208,8 +232,12 @@ class MainWindow(QMainWindow):
         self.pool.start(job)
 
     def choose_folder(self):
-        if folder := QFileDialog.getExistingDirectory(self, "Choose mzML folder", str(self.folder or Path.home())):
-            self.folder = Path(folder); settings.set_data_folder(self.folder); self.refresh_files()
+        dialog = LocationsDialog(self.folders, self)
+        if dialog.exec():
+            self.folders = dialog.selected_locations()
+            self.folder = self.folders[0] if self.folders else None
+            settings.set_data_folders(self.folders)
+            self.refresh_files()
 
     def choose_remote_folder(self):
         roots = remote_mount_roots()
@@ -217,7 +245,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Mounted remote folders", "Mount the AFP share in your system file manager first, then use this action. For /mnt or /media mounts, use the normal folder chooser.")
             return
         dialog = QFileDialog(self, "Choose a mounted remote folder"); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setSidebarUrls([QUrl.fromLocalFile(str(x)) for x in [Path.home(), *roots]]); dialog.setDirectory(str(roots[0]))
-        if dialog.exec() and dialog.selectedFiles(): self.folder = Path(dialog.selectedFiles()[0]); settings.set_data_folder(self.folder); self.refresh_files()
+        if dialog.exec() and dialog.selectedFiles():
+            folder = Path(dialog.selectedFiles()[0])
+            self.folders = [*self.folders, folder] if folder not in self.folders else self.folders
+            self.folder = self.folders[0] if self.folders else None
+            settings.set_data_folders(self.folders)
+            self.refresh_files()
 
     def choose_cache_folder(self):
         initial = settings.cache_folder() or Path.home()
@@ -359,17 +392,35 @@ class MainWindow(QMainWindow):
                 return
 
     def refresh_files(self):
-        if not self.folder: return
-        self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_label.setText(str(self.folder)); self.folder_token += 1; self.set_loading(True); self.submit(self.folder_token, discover_files, self.files_listed, self.folder)
+        if not self.folders and self.folder:
+            self.folders = [self.folder]
+        self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_token += 1
+        if not self.folders:
+            self.folder_label.setText("Add mzML locations in Settings")
+            self.statusBar().showMessage("No mzML locations configured.")
+            return
+        self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
+        self.discovered_paths, self.discovery_errors, self.pending_discoveries = [], [], len(self.folders)
+        self.set_loading(True)
+        for folder in self.folders:
+            self.submit(self.folder_token, discover_files, self.files_listed, folder)
 
     def files_listed(self, token, paths, error):
         if token != self.folder_token: return
+        if error: self.discovery_errors.append(error)
+        elif paths: self.discovered_paths.extend(paths)
+        if self.pending_discoveries:
+            self.pending_discoveries -= 1
+        if self.pending_discoveries:
+            return
         self.set_loading(False)
-        if error: self.statusBar().showMessage(f"Cannot read folder: {error}. Reconnect remote shares, then refresh."); return
-        for path in paths:
+        for path in sorted(self.discovered_paths, key=lambda value: value.name.casefold()):
             item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         self.refresh_cache_indicators()
-        self.statusBar().showMessage(f"{len(paths)} mzML files found. Select one or more files." if paths else "No mzML files found in this folder.")
+        if self.discovery_errors:
+            self.statusBar().showMessage(f"{self.files.count()} mzML files found; {len(self.discovery_errors)} location(s) could not be read.")
+        else:
+            self.statusBar().showMessage(f"{self.files.count()} mzML files found across {len(self.folders)} location(s). Select one or more files." if self.files.count() else "No mzML files found in configured locations.")
 
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]

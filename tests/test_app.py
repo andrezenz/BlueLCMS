@@ -62,7 +62,23 @@ def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
         window.files_listed(window.folder_token - 1, [path], "")
         assert window.files.count() == 0
         window.files_listed(window.folder_token, None, "Share disconnected")
-        assert "Reconnect" in window.statusBar().currentMessage()
+        assert "could not be read" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+
+
+def test_multiple_mzml_locations_feed_one_sidebar(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir(); second.mkdir()
+    write_mzml(first / "first.mzML"); write_mzml(second / "second.mzML")
+    settings.set_data_folders([first, second])
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); app.processEvents()
+        assert {window.files.item(index).data(Qt.ItemDataRole.UserRole) for index in range(window.files.count())} == {first / "first.mzML", second / "second.mzML"}
     finally:
         window.close()
 
