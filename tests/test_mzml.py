@@ -27,6 +27,16 @@ def test_discovery(tmp_path):
     assert file_display_name(paths[0], True) == "2026_09_30_new.mzML"
 
 
+def test_discovery_includes_nested_folders(tmp_path):
+    nested = tmp_path / "batch" / "day"
+    nested.mkdir(parents=True)
+    paths = [tmp_path / "root.mzML", nested / "nested.MZML", nested / "compressed.gz"]
+    for path in paths:
+        path.touch()
+    (nested / "ignore.txt").touch()
+    assert set(discover_files(tmp_path)) == set(paths)
+
+
 def test_dad_nearest_wavelength_and_sorting():
     run = parse_spectra([
         spectrum(time=2, **{"wavelength array": [250, 253.5, 260], "intensity array": [9, 3, 7]}),

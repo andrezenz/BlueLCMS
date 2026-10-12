@@ -95,8 +95,11 @@ the newly selected measurement is ready, paused loads resume in the background
 and are cached without being added to the selected plots.
 
 1. Use **Settings → Manage mzML locations…** to add one or more folders. The
-   locations are remembered between sessions and their files appear together in
-   the sidebar; `.mzML` and gzip-compressed `.gz` mzML files are supported.
+   locations are remembered between sessions. All subfolders are searched and
+   measurements appear under expandable source/folder nodes in the sidebar;
+   `.mzML` and gzip-compressed `.gz` mzML files are supported. Cached-only
+   measurements retain their original folder hierarchy. Folder nodes can be
+   expanded or collapsed; select measurement leaves to view data.
    extensions are matched case-insensitively. Use **Refresh file list** after
    adding files.
    Files beginning with `yyyy_mm_dd` sort newest first. Toggle **Settings →
@@ -212,9 +215,41 @@ total-ion-current traces on its right-hand axis as MS spectra are decoded. They
 provide useful loading feedback before DAD spectra become available without
 changing the UV signal scale.
 
-Use the **MS TIC** toolbar toggle to persistently show or hide completed-run
-TIC traces. Streaming TIC remains visible while a file is loading even when the
-saved preference is off.
+Use the independent **MS TIC (+)** and **MS TIC (-)** toolbar buttons to show or
+hide positive and negative TIC traces. Both preferences persist across restarts
+and are respected for completed measurements and live streaming alike.
+
+## Opening measurements from other programs
+
+External programs can invoke the installed application with a measurement path
+and a retention-time interval (times are in minutes):
+
+```bash
+BlueLCMS --open "/path/to/sample.mzML" --start 2.35 --end 2.45
+```
+
+To select the nearest positive MS scan and set the UV wavelength:
+
+```bash
+BlueLCMS --open "/path/to/sample.mzML" --time 2.40 --polarity positive --wavelength 254
+```
+
+On Windows, use the installed `BlueLCMS.exe` path. From a source checkout, use
+`.venv/bin/python launch.py` with the same arguments. Another Python program can
+call `subprocess.Popen([executable, "--open", path, "--start", "2.35", "--end", "2.45"])`.
+
+If BlueLCMS is already running, the request is forwarded to that instance using
+a local socket/named pipe and its window is brought to the foreground. Paths are
+made absolute in the calling process. Supported files are mzML, gzip-compressed
+mzML, and BlueLCMS NPZ caches. `--polarity positive` or `negative` focuses the
+corresponding mass panel and limits nearest-scan selection to that polarity.
+
+Files can live outside configured source folders. BlueLCMS asks whether to cache
+such a measurement: **Yes** stores a local analysis cache, **No** opens it for
+this session without caching, and **Cancel** leaves the current view unchanged.
+If needed, **Yes** first asks for a cache folder. Original files are not moved.
+An existing cache is used without prompting, even when the original file is
+unavailable. The requested interval or scan is selected once loading finishes.
 
 ## UV Integrations
 

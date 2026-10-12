@@ -92,12 +92,14 @@ def file_display_name(path: Path, show_date_prefix: bool) -> str:
 
 
 def discover_files(folder: Path) -> list[Path]:
-    """List mzML files and gzip-compressed mzML files newest-first."""
+    """Recursively find mzML and gzip-compressed mzML files newest-first."""
+    if not folder.is_dir():
+        raise OSError(f"Source folder is unavailable: {folder}")
     def order(path):
         match = DATE_PREFIX.match(path.name)
         return (0, -int(match.group(1).replace("_", "")), path.name.casefold()) if match else (1, 0, path.name.casefold())
     return sorted(
-        (p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in {".mzml", ".gz"}),
+        (p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in {".mzml", ".gz"}),
         key=order,
     )
 

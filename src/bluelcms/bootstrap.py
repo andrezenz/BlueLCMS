@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 from PySide6.QtCore import QProcess, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from . import releases
@@ -50,6 +50,9 @@ def install(channel: str) -> str:
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("BlueLCMS Installer")
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    icon = root / "bluelcms.svg" if getattr(sys, "frozen", False) else root / "packaging/linux/bluelcms.svg"
+    app.setWindowIcon(QIcon(str(icon)))
     channel, accepted = QInputDialog.getItem(None, "Install BlueLCMS", "Release channel:", ("stable", "development"), 0, False)
     if not accepted:
         return 0

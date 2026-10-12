@@ -13,6 +13,8 @@ OutputDir=..\..\dist
 OutputBaseFilename=BlueLCMS-setup
 Compression=lzma
 SolidCompression=yes
+SetupIconFile=bluelcms.ico
+UninstallDisplayIcon={app}\BlueLCMS.exe
 
 [Files]
 Source: "..\..\dist\BlueLCMS\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

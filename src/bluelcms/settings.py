@@ -51,12 +51,17 @@ def set_show_date_prefix(show: bool) -> None:
     settings().setValue("show_date_prefix", show)
 
 
-def show_tic() -> bool:
-    return settings().value("show_tic", True, type=bool)
+def show_tic(polarity=None) -> bool:
+    legacy = settings().value("show_tic", True, type=bool)
+    if polarity is None:
+        return legacy
+    key = "show_tic_positive" if polarity == "+" else "show_tic_negative"
+    return settings().value(key, legacy, type=bool)
 
 
-def set_show_tic(show: bool) -> None:
-    settings().setValue("show_tic", show)
+def set_show_tic(show: bool, polarity=None) -> None:
+    key = "show_tic" if polarity is None else "show_tic_positive" if polarity == "+" else "show_tic_negative"
+    settings().setValue(key, show)
 
 
 def cache_expiry_days() -> int:

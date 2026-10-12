@@ -12,7 +12,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
-    QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
+    QLabel, QListWidget, QMainWindow, QMessageBox, QSplitter,
     QDialog, QDialogButtonBox, QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
     QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
 
@@ -22,6 +22,8 @@ from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
 from . import package_updater
+from .sidebar import MeasurementItem, MeasurementTree
+from .external import OpenRequestServer, forward_request, parse_request
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
@@ -291,6 +293,11 @@ class MainWindow(QMainWindow):
         self.paused_loads = {}
         self.deferred_results = {}
         self.load_sequence = 0
+        self.session_sources = set()
+        self.cache_policy = {}
+        self.external_requests = []
+        self.pending_view_request = None
+        self.last_uv_bounds = None
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
@@ -301,11 +308,16 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.progress)
         toolbar = QToolBar("Display", self)
         self.addToolBar(toolbar)
-        self.show_tic = QAction("MS TIC", self)
-        self.show_tic.setCheckable(True)
-        self.show_tic.setChecked(settings.show_tic())
-        self.show_tic.toggled.connect(self.set_show_tic)
-        toolbar.addAction(self.show_tic)
+        self.tic_actions = {}
+        for polarity in ("+", "-"):
+            action = QAction(f"MS TIC ({polarity})", self)
+            action.setCheckable(True)
+            action.setChecked(settings.show_tic(polarity))
+            action.toggled.connect(lambda show, p=polarity: self.set_show_tic(p, show))
+            toolbar.addAction(action)
+            self.tic_actions[polarity] = action
+        self.show_tic_positive = self.tic_actions["+"]
+        self.show_tic_negative = self.tic_actions["-"]
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Manage mzML locations…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
@@ -333,8 +345,7 @@ class MainWindow(QMainWindow):
         about_action = QAction("About BlueLCMS", self)
         about_action.triggered.connect(self.show_about)
         about_menu.addAction(about_action)
-        self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
-        self.files.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.files, self.folder_label = MeasurementTree(), QLabel("Choose a data folder in Settings")
         self.files.itemSelectionChanged.connect(self.select_files)
         self.folder_label.setWordWrap(True)
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
@@ -426,8 +437,8 @@ class MainWindow(QMainWindow):
             source = item.data(Qt.ItemDataRole.UserRole)
             item.setText(vendor_display_name(source, show) if isinstance(source, VendorMeasurement) else file_display_name(source, show))
 
-    def set_show_tic(self, show):
-        settings.set_show_tic(show)
+    def set_show_tic(self, polarity, show):
+        settings.set_show_tic(show, polarity)
         self.draw_uv()
 
     def set_cache_expiry(self, days):
@@ -618,6 +629,7 @@ class MainWindow(QMainWindow):
         self.background_discovery = background
         if not self.folders and self.folder:
             self.folders = [self.folder]
+        self.files.set_roots(self.folders)
         if not background:
             self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide()
         self.folder_token += 1
@@ -659,6 +671,7 @@ class MainWindow(QMainWindow):
                     self.cached_measurements.pop(expected)
                     self.cached_measurements.setdefault(source, expected)
         paths = set(self.discovered_paths)
+        paths.update(self.session_sources)
         for source in self.cached_measurements:
             if isinstance(source, VendorMeasurement):
                 self.discovered_measurements.setdefault(source.key, source)
@@ -684,16 +697,20 @@ class MainWindow(QMainWindow):
         for path in sorted(paths, key=lambda value: value.name.casefold()):
             if path in existing:
                 continue
-            item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
+            item = MeasurementItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         for measurement in sorted(self.discovered_measurements.values(), key=lambda value: value.key, reverse=True):
             if measurement in existing:
                 continue
-            item = QListWidgetItem(vendor_display_name(measurement, settings.show_date_prefix()))
+            item = MeasurementItem(vendor_display_name(measurement, settings.show_date_prefix()))
             item.setData(Qt.ItemDataRole.UserRole, measurement)
             item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
             item.setToolTip(measurement_tooltip(measurement))
             self.files.addItem(item)
         self.refresh_cache_indicators()
+        if self.external_requests:
+            requests, self.external_requests = self.external_requests, []
+            for request in requests:
+                self.open_external(request)
         if self.background_discovery:
             return
         pairs = len(self.discovered_measurements)
@@ -731,6 +748,8 @@ class MainWindow(QMainWindow):
 
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
+        if self.pending_view_request and self.pending_view_request[0] not in paths:
+            self.pending_view_request = None
         if len(paths) == 1 and self.active_load is not None and self.active_load not in paths:
             previous = self.active_load
             job = self.load_jobs.get(previous)
@@ -754,6 +773,82 @@ class MainWindow(QMainWindow):
             self.progress.setFormat(f"Loading {self.queue_marker()} %p%")
         self.start_next_load(update_display=False)
         self.draw_uv(); self.timer.start()
+        self.apply_external_view()
+
+    def open_external(self, request):
+        if self.pending_discoveries:
+            self.external_requests.append(request)
+            return
+        path = Path(request.path)
+        # A caller may also name an existing cache directly.
+        path = next((source for source, cache in self.cached_measurements.items() if cache == path and isinstance(source, Path)), path)
+        cache = self.cache_for(path)
+        cached = bool(cache and cache.is_file())
+        if not path.is_file() and not cached:
+            QMessageBox.warning(self, "Cannot open measurement", f"The file is unavailable and no local cache was found:\n{path}")
+            return
+        outside_sources = not any(path.is_relative_to(folder) for folder in self.folders)
+        if outside_sources and not cached:
+            answer = QMessageBox.question(self, "Cache external measurement",
+                f"This measurement is outside your configured source folders:\n{path}\n\nAdd its analysis data to your cache?\n\nNo opens it for this session without caching.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes)
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            should_cache = answer == QMessageBox.StandardButton.Yes
+            if should_cache and settings.cache_folder() is None:
+                folder = QFileDialog.getExistingDirectory(self, "Choose local cache folder", str(Path.home()))
+                if not folder:
+                    return
+                settings.set_cache_folder(Path(folder))
+            self.cache_policy[path] = should_cache
+        self.session_sources.add(path)
+        item = next((self.files.item(index) for index in range(self.files.count()) if self.files.item(index).data(Qt.ItemDataRole.UserRole) == path), None)
+        if item is None:
+            item = MeasurementItem(file_display_name(path, settings.show_date_prefix()))
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self.files.addItem(item)
+        self.pending_view_request = (path, request)
+        self.mode.setCurrentText("UV traces")
+        self.showNormal(); self.raise_(); self.activateWindow()
+        self.files.setCurrentRow(self.files.row(item))
+        if path in self.runs:
+            self.apply_external_view()
+            if self.cache_policy.get(path, True) and settings.cache_folder() and not cached:
+                cache = self.cache_for(path)
+                self.submit(self.load_token, write_compact_cache, lambda t, result, error: self.cached(t, path, result, error), self.runs[path], cache, cache_metadata(path))
+        self.refresh_cache_indicators()
+
+    def apply_external_view(self):
+        if not self.pending_view_request:
+            return
+        path, request = self.pending_view_request
+        selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        if path not in self.runs or path not in selected or self.active_load == path:
+            return
+        self.pending_view_request = None
+        run = self.runs[path]
+        if request.wavelength is not None:
+            self.wavelength.setValue(request.wavelength)
+        start, end = request.start, request.end
+        if request.time is not None:
+            scans = [scan for scan in run.scans if request.polarity is None or scan.polarity == request.polarity]
+            if not scans:
+                QMessageBox.warning(self, "Spectrum unavailable", "This measurement has no mass scans for the requested polarity.")
+                return
+            start = end = min(scans, key=lambda scan: abs(scan.time - request.time)).time
+        if start is not None:
+            times = [scan.time for scan in run.scans] + [scan.time for scan in run.dad]
+            if not times or end < min(times) or start > max(times):
+                QMessageBox.warning(self, "Spectrum unavailable", "The requested interval is outside this measurement's time range.")
+                return
+            self.uv.region.setBounds((min(min(times), start), max(max(times), end)))
+            self.uv.region.setRegion((start, end))
+            self.uv.region.show()
+            self.timer.stop()
+            self.calculate_region()
+        if request.polarity:
+            (self.positive if request.polarity == "+" else self.negative).setFocus()
 
     def queue_marker(self):
         if self.active_load is None:
@@ -772,6 +867,7 @@ class MainWindow(QMainWindow):
             self.uv.integration_enabled = len(self.runs) == 1 and len(self.files.selectedItems()) == 1
             if update_display:
                 self.refresh_integrations(); self.draw_uv(); self.timer.start()
+                self.apply_external_view()
             if self.paused_loads:
                 path = next(iter(self.paused_loads))
                 self.resume_load(path)
@@ -865,7 +961,7 @@ class MainWindow(QMainWindow):
                 self.set_loading(False)
             self.draw_uv()
         cache = self.cache_for(path)
-        if cache and not cache.is_file():
+        if cache and not cache.is_file() and self.cache_policy.get(path, True):
             name = path.label if isinstance(path, VendorMeasurement) else path.name
             self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {self.queue_marker()} {name}…"); self.progress.show()
             self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
@@ -999,9 +1095,12 @@ class MainWindow(QMainWindow):
 
     def draw_uv(self):
         loading = self.loading_timer.isActive()
+        previous_region = self.uv.region.getRegion()
+        preserve_region = self.uv.region.isVisible() and self.last_uv_bounds is not None and previous_region != self.last_uv_bounds
         self.uv.clear(); self.uv.addItem(self.uv.region); self.uv.region.hide()
         self.uv.tic_view.clear()
-        show_tic = settings.show_tic() or bool(self.stream_tic)
+        enabled_polarities = {polarity for polarity in ("+", "-") if settings.show_tic(polarity)}
+        show_tic = bool(enabled_polarities)
         self.uv.showAxis("right", show_tic)
         if loading:
             loading_overlay(self.uv, True)
@@ -1029,24 +1128,31 @@ class MainWindow(QMainWindow):
                 tic = self.stream_tic.get(path, [])
             name = path.name if isinstance(path, Path) else path.label
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=name); all_times.extend(times)
+            elif path in self.runs:
+                all_times.extend(scan.time for scan in self.runs[path].scans)
             if show_tic and path in self.runs:
                 for trace in self.runs[path].auxiliary:
                     self.uv.tic_view.addItem(pg.PlotCurveItem(trace.times, trace.values, pen=pg.mkPen("#9d8ce0", width=1.5, style=Qt.PenStyle.DotLine), name=trace.name))
                     all_times.extend(trace.times.tolist())
             if show_tic:
                 for time, intensity, polarity in tic:
-                    tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
+                    if polarity in enabled_polarities:
+                        tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
         if show_tic:
-            for polarity, color, label in (("+", "#4ecf88", "Positive MS TIC"), ("-", "#f36f6f", "Negative MS TIC")):
+            for polarity, color, label in (("+", "#4ecf88", "MS TIC (+)"), ("-", "#f36f6f", "MS TIC (-)")):
                 if tic_by_polarity[polarity]:
                     points = sorted(tic_by_polarity[polarity].items())
                     values = np.asarray(points, dtype=float)
                     self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine), name=label))
         suffix = " (streaming)" if self.stream_uv or self.stream_tic else ""
-        title = "UV / DAD + positive/negative MS TIC" if show_tic else "UV / DAD"
+        title = "UV / DAD" + "".join(f" + MS TIC ({polarity})" for polarity in ("+", "-") if polarity in enabled_polarities)
         self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"{title} — target {target} nm{suffix}; drag to select time")
         if all_times:
-            bounds = (min(all_times), max(all_times)); self.uv.region.setBounds(bounds); self.uv.region.setRegion(bounds); self.uv.region.show(); self.uv.enableAutoRange()
+            bounds = (min(all_times), max(all_times))
+            self.uv.region.setBounds(bounds)
+            region = (max(bounds[0], min(bounds[1], previous_region[0])), max(bounds[0], min(bounds[1], previous_region[1]))) if preserve_region else bounds
+            self.uv.region.setRegion(region); self.uv.region.show(); self.uv.enableAutoRange()
+            self.last_uv_bounds = bounds
         if loading:
             loading_overlay(self.uv, True)
 
@@ -1120,6 +1226,8 @@ class MainWindow(QMainWindow):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event):
+        if hasattr(self, "open_request_server"):
+            self.open_request_server.close()
         self.source_refresh_timer.stop(); self.stream_timer.stop()
         for job in self.load_jobs.values():
             job.resume()
@@ -1127,4 +1235,22 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.2.dev1"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); QTimer.singleShot(0, window.startup_checks); return app.exec()
+    request = parse_request(sys.argv[1:])
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.2.dev1"); app.setWindowIcon(application_icon())
+    if request:
+        try:
+            if forward_request(request):
+                return 0
+        except RuntimeError as error:
+            QMessageBox.warning(None, "External open failed", str(error))
+            return 1
+    window = MainWindow()
+    window.open_request_server = OpenRequestServer(window)
+    window.open_request_server.requested.connect(window.open_external)
+    window.open_request_server.listen()
+    window.show()
+    QTimer.singleShot(0, window.startup_checks)
+    if request:
+        QTimer.singleShot(0, lambda: window.open_external(request))
+    return app.exec()

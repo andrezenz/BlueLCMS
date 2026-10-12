@@ -9,7 +9,8 @@ import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QListWidgetItem
+from PySide6.QtWidgets import QApplication
+from bluelcms.sidebar import MeasurementItem as QListWidgetItem
 
 from bluelcms.app import MainWindow
 from bluelcms import settings
@@ -124,6 +125,76 @@ def test_background_refresh_preserves_selection_and_toggle(tmp_path, monkeypatch
         assert not reopened.source_refresh_timer.isActive()
     finally:
         reopened.close()
+
+
+def test_sidebar_groups_nested_measurements_and_preserves_collapsed_folders(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    root = tmp_path / "remote"
+    nested = root / "batch" / "day"
+    nested.mkdir(parents=True)
+    source = write_mzml(nested / "first.mzML")
+    settings.set_data_folders([root])
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        leaf = window.files.item(0)
+        day = leaf.parent()
+        assert day.text() == "day"
+        assert day.parent().text() == "batch"
+        assert day.parent().parent().text() == "remote"
+        assert window.files.topLevelItemCount() == 1
+        assert not day.flags() & Qt.ItemFlag.ItemIsSelectable
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); application.processEvents()
+        original_run = window.run_data
+        assert original_run is not None
+        day.setExpanded(False)
+        write_mzml(nested / "second.mzML")
+        window.refresh_files(background=True)
+        window.pool.waitForDone(); application.processEvents()
+        assert window.files.count() == 2
+        assert leaf.parent() is day
+        assert not day.isExpanded()
+        assert window.run_data is original_run
+        assert window.files.selectedItems()[0].data(Qt.ItemDataRole.UserRole) == source
+    finally:
+        window.close()
+
+
+def test_cached_only_measurement_keeps_original_folder_hierarchy(tmp_path, monkeypatch):
+    import shutil
+    from bluelcms.app import cache_metadata
+    from bluelcms.folders import cached_path
+    from bluelcms.mzml import load_run, write_compact_cache
+
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    root = tmp_path / "remote"
+    nested = root / "batch" / "day"
+    nested.mkdir(parents=True)
+    source = write_mzml(nested / "sample.mzML")
+    cache = tmp_path / "cache"
+    settings.set_data_folders([root])
+    settings.set_cache_folder(cache)
+    write_compact_cache(load_run(source), cached_path(source, cache), cache_metadata(source))
+    shutil.rmtree(root)
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        assert window.files.count() == 1
+        leaf = window.files.item(0)
+        assert leaf.parent().text() == "day"
+        assert leaf.parent().parent().text() == "batch"
+        assert leaf.parent().parent().parent().text() == "remote"
+        assert leaf.data(Qt.ItemDataRole.UserRole + 1) == "cache-only"
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); application.processEvents()
+        assert window.run_data is not None
+    finally:
+        window.close()
 
 
 def test_startup_prompts_for_missing_cache_folder(tmp_path, monkeypatch):

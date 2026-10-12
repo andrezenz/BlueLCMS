@@ -28,7 +28,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build tools
-        run: python -m pip install --upgrade pip pyinstaller .
+        run: python -m pip install --upgrade pip pyinstaller pillow .
+      - name: Generate Windows application icon
+        if: runner.os == 'Windows'
+        run: python packaging/windows/build_icon.py
       - name: Configure development update channel
         if: github.ref == 'refs/heads/dev'
         run: cp packaging/runtime_hooks/development.py runtime-hook.py
@@ -36,7 +39,7 @@ jobs:
         if: github.ref != 'refs/heads/dev'
         run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
-        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS --collect-data psims --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
+        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --collect-data psims --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/BlueLCMS.desktop packaging/linux/install.sh packaging/linux/bluelcms.svg package/ && tar -C package -czf dist/${{ matrix.artifact }} .
