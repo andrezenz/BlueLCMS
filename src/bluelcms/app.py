@@ -20,6 +20,41 @@ from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
+from .vendor import (VendorMeasurement, advion_raw_path, discover_vendor_measurements,
+    load_vendor_measurement)
+
+
+def vendor_display_name(measurement, show_date_prefix: bool) -> str:
+    """Label a matched measurement the same way mzML files are labelled."""
+    if show_date_prefix:
+        return f"{measurement.key.date}_{measurement.key.sample}   [Agilent + Advion]"
+    return f"{measurement.key.sample}   [Agilent + Advion]"
+
+
+def integration_anchor(source):
+    """Map a sidebar source to the file whose fingerprint identifies its integrations."""
+    if isinstance(source, VendorMeasurement):
+        archive = next((item for item in sorted(source.agilent.iterdir()) if item.suffix.lower() == ".dx"), None)
+        return archive or source.agilent
+    return source
+
+
+def integration_beside_source(source):
+    """Vendor folders are usually read-only shares, so never write beside them."""
+    return not isinstance(source, VendorMeasurement)
+
+
+def measurement_tooltip(measurement) -> str:
+    """List the vendor files that make up one displayed measurement."""
+    spectra = sum(1 for source in (measurement.advion_positive, measurement.advion_negative) if advion_raw_path(source))
+    lines = [
+        measurement.label,
+        f"Agilent HPLC/DAD: {measurement.agilent.name}",
+        f"Advion ESI +: {measurement.advion_positive.name}",
+        f"Advion ESI -: {measurement.advion_negative.name}",
+        "Mass spectra available." if spectra == 2 else "Chromatograms only: open the run in Advion Mass Express to enable mass spectra.",
+    ]
+    return "\n".join(lines)
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
@@ -68,6 +103,24 @@ class Job(QRunnable):
     def run(self):
         try: self.signals.done.emit(self.token, self.function(*self.args), "")
         except Exception as error: self.signals.done.emit(self.token, None, str(error))
+
+
+class VendorLoadJob(Job):
+    """Load one matched Agilent + Advion measurement, reporting step progress."""
+
+    def __init__(self, token, measurement):
+        super().__init__(token, load_vendor_measurement, measurement)
+        self.measurement = measurement
+
+    def run(self):
+        try:
+            result = load_vendor_measurement(
+                self.measurement,
+                progress=lambda done, total: self.signals.progress.emit(self.token, done, total))
+        except Exception as error:
+            self.signals.done.emit(self.token, None, str(error))
+        else:
+            self.signals.done.emit(self.token, result, "")
 
 
 class LoadJob(Job):
@@ -139,6 +192,7 @@ class MainWindow(QMainWindow):
         self.folder = self.folders[0] if self.folders else None
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.integrations, self.integration_source = [], None
+        self.discovered_measurements = {}
         self.load_token = self.region_token = self.folder_token = 0
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
@@ -263,7 +317,8 @@ class MainWindow(QMainWindow):
         settings.set_show_date_prefix(show)
         for index in range(self.files.count()):
             item = self.files.item(index)
-            item.setText(file_display_name(item.data(Qt.ItemDataRole.UserRole), show))
+            source = item.data(Qt.ItemDataRole.UserRole)
+            item.setText(vendor_display_name(source, show) if isinstance(source, VendorMeasurement) else file_display_name(source, show))
 
     def set_show_tic(self, show):
         settings.set_show_tic(show)
@@ -372,7 +427,10 @@ class MainWindow(QMainWindow):
 
     def refresh_cache_indicators(self):
         for index in range(self.files.count()):
-            item = self.files.item(index); path = item.data(Qt.ItemDataRole.UserRole); cache = self.cache_for(path); legacy = self.legacy_cache_for(path)
+            item = self.files.item(index); path = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(path, VendorMeasurement):
+                continue
+            cache = self.cache_for(path); legacy = self.legacy_cache_for(path)
             if cache and cache.is_file():
                 item.setIcon(compacted_icon()); item.setToolTip("Cached locally (compact native-resolution cache)")
             elif legacy and legacy.is_file():
@@ -381,6 +439,8 @@ class MainWindow(QMainWindow):
                 item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)); item.setToolTip("Original source")
 
     def set_download_state(self, path, active):
+        if isinstance(path, VendorMeasurement):
+            return
         for index in range(self.files.count()):
             item = self.files.item(index)
             if item.data(Qt.ItemDataRole.UserRole) == path:
@@ -400,15 +460,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No mzML locations configured.")
             return
         self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
-        self.discovered_paths, self.discovery_errors, self.pending_discoveries = [], [], len(self.folders)
+        self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
+        self.pending_discoveries = len(self.folders) * 2
         self.set_loading(True)
+        if len(self.folders) >= 2:
+            agilent_folder, advion_folder = self.folders[0], self.folders[1]
+        else:
+            agilent_folder, advion_folder = self.folders[0], None
         for folder in self.folders:
             self.submit(self.folder_token, discover_files, self.files_listed, folder)
+            self.submit(
+                self.folder_token,
+                discover_vendor_measurements,
+                self.measurements_listed,
+                folder,
+                advion_folder if folder == agilent_folder else None,
+            )
 
-    def files_listed(self, token, paths, error):
-        if token != self.folder_token: return
-        if error: self.discovery_errors.append(error)
-        elif paths: self.discovered_paths.extend(paths)
+    def discovery_finished(self):
         if self.pending_discoveries:
             self.pending_discoveries -= 1
         if self.pending_discoveries:
@@ -416,11 +485,33 @@ class MainWindow(QMainWindow):
         self.set_loading(False)
         for path in sorted(self.discovered_paths, key=lambda value: value.name.casefold()):
             item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
+        for measurement in sorted(self.discovered_measurements.values(), key=lambda value: value.key, reverse=True):
+            item = QListWidgetItem(vendor_display_name(measurement, settings.show_date_prefix()))
+            item.setData(Qt.ItemDataRole.UserRole, measurement)
+            item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+            item.setToolTip(measurement_tooltip(measurement))
+            self.files.addItem(item)
         self.refresh_cache_indicators()
+        pairs = len(self.discovered_measurements)
+        found = self.files.count() - pairs
         if self.discovery_errors:
-            self.statusBar().showMessage(f"{self.files.count()} mzML files found; {len(self.discovery_errors)} location(s) could not be read.")
+            self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements found; {len(self.discovery_errors)} location(s) could not be read.")
         else:
-            self.statusBar().showMessage(f"{self.files.count()} mzML files found across {len(self.folders)} location(s). Select one or more files." if self.files.count() else "No mzML files found in configured locations.")
+            self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements across {len(self.folders)} location(s). Select one or more." if self.files.count() else "No mzML files or matched measurements found in configured locations.")
+
+    def files_listed(self, token, paths, error):
+        if token != self.folder_token: return
+        if error: self.discovery_errors.append(error)
+        elif paths: self.discovered_paths.extend(paths)
+        self.discovery_finished()
+
+    def measurements_listed(self, token, measurements, error):
+        if token != self.folder_token: return
+        if error: self.discovery_errors.append(error)
+        else:
+            for measurement in measurements:
+                self.discovered_measurements.setdefault(measurement.key, measurement)
+        self.discovery_finished()
 
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
@@ -430,6 +521,9 @@ class MainWindow(QMainWindow):
         missing = [p for p in paths if p not in self.runs]
         if missing: self.set_loading(True)
         for path in missing:
+            if isinstance(path, VendorMeasurement):
+                self.submit_vendor_load(token, path)
+                continue
             cache = self.cache_for(path)
             legacy = self.legacy_cache_for(path)
             source = cache if cache and cache.is_file() else legacy if legacy and legacy.is_file() else path
@@ -441,17 +535,50 @@ class MainWindow(QMainWindow):
             self.submit_load(token, path, source, source_label, lambda t, r, e, p=path: self.loaded(t, p, r, e))
         self.draw_uv(); self.timer.start()
 
+    def snap_wavelength(self, run):
+        """Select a wavelength the run actually contains.
+
+        Agilent exports here carry a single fixed channel (250 nm), so leaving the
+        control at its mzML default of 254 nm would show an empty plot.
+        """
+        available = run.uv_wavelengths()
+        if len(available) and not (available.min() <= self.wavelength.value() <= available.max()):
+            self.wavelength.setValue(int(round(float(available.min()))))
+
+    def submit_vendor_load(self, token, measurement):
+        """Load a matched Agilent+Advion pair; these are never written to the mzML cache."""
+        job = VendorLoadJob(token, measurement)
+        self.jobs.add(job)
+        job.signals.progress.connect(lambda t, done, total: self.load_progress(t, measurement, "Agilent+Advion measurement", done, total))
+        job.signals.done.connect(lambda t, r, e, m=measurement: self.loaded(t, m, r, e))
+        job.signals.done.connect(lambda *_: self.jobs.discard(job))
+        self.set_loading(True)
+        self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {measurement.label}…"); self.progress.show()
+        self.pool.start(job)
+
     def loaded(self, token, path, run, error):
         if token != self.load_token: return
         if error:
             self.set_download_state(path, False)
             self.progress.hide()
-            self.statusBar().showMessage(f"Unable to load {path.name}: {error}")
+            self.set_loading(False)
+            name = path.name if isinstance(path, Path) else path.label
+            self.statusBar().showMessage(f"Unable to load {name}: {error}")
             return
         self.runs[path] = run
         self.stream_uv.pop(path, None)
         self.stream_tic.pop(path, None)
         self.run_data = run
+        if isinstance(path, VendorMeasurement):
+            # Vendor runs are read in place; only mzML sources are cached.
+            self.snap_wavelength(run)
+            self.progress.hide()
+            self.set_download_state(path, False)
+            if len(self.runs) == len(self.files.selectedItems()):
+                self.uv.integration_enabled = len(self.runs) == 1
+                self.refresh_integrations()
+                self.set_loading(False); self.draw_uv(); self.timer.start()
+            return
         cache = self.cache_for(path)
         if cache and not cache.is_file():
             self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {path.name}…"); self.progress.show()
@@ -472,7 +599,7 @@ class MainWindow(QMainWindow):
         source = self.selected_integration_source()
         self.integrations, self.integration_source = [], source
         if source is not None:
-            records, _, stale = load_integrations(source, settings.integration_folder())
+            records, _, stale = load_integrations(integration_anchor(source), settings.integration_folder(), integration_beside_source(source))
             self.integrations = records
             self.integration_dock.setWindowTitle("UV integrations (source changed)" if stale else "UV integrations")
         self.refresh_integration_table()
@@ -506,7 +633,7 @@ class MainWindow(QMainWindow):
             self.refresh_integrations()
         self.integrations.append({"start_min": min(start, stop), "stop_min": max(start, stop), "wavelength_nm": target, "absolute_integral": integral})
         try:
-            save_integrations(source, settings.integration_folder(), self.integrations)
+            save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source))
         except OSError as error:
             self.integrations.pop()
             self.statusBar().showMessage(f"Could not save integration: {error}")
@@ -521,14 +648,14 @@ class MainWindow(QMainWindow):
         if source is None or not selected:
             return
         del self.integrations[selected[0].row()]
-        save_integrations(source, settings.integration_folder(), self.integrations)
+        save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source))
         self.refresh_integration_table()
 
     def clear_integrations(self):
         if self.integration_source is None or not self.integrations:
             return
         self.integrations.clear()
-        save_integrations(self.integration_source, settings.integration_folder(), self.integrations)
+        save_integrations(integration_anchor(self.integration_source), settings.integration_folder(), self.integrations, integration_beside_source(self.integration_source))
         self.refresh_integration_table()
 
     def streamed_uv_points(self, token, path, points):
@@ -571,7 +698,10 @@ class MainWindow(QMainWindow):
         else:
             self.progress.setRange(0, 0); self.progress.setFormat(f"{action}…")
         self.progress.show()
-        self.statusBar().showMessage(f"{action} {path.name}: {copied / 1048576:.1f} / {total / 1048576:.1f} MiB")
+        name = path.name if isinstance(path, Path) else path.label
+        unit = "step" if isinstance(path, VendorMeasurement) else "MiB"
+        done, size = (copied, total) if unit == "step" else (copied / 1048576, total / 1048576)
+        self.statusBar().showMessage(f"{action} {name}: {done:.0f} / {size:.0f} {unit}")
 
     def set_loading(self, visible):
         for plot in (self.uv, self.positive, self.negative): loading_overlay(plot, visible)
@@ -606,13 +736,19 @@ class MainWindow(QMainWindow):
         selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
         for index, path in enumerate(selected):
             if path in self.runs:
-                times, signal, used = self.runs[path].uv_trace(target)
-                tic = [(scan.time, float(scan.intensity.sum()), scan.polarity) for scan in self.runs[path].scans]
+                run = self.runs[path]
+                times, signal, used = run.uv_trace(target)
+                tic = run.tic_points()
             else:
                 values = np.asarray(self.stream_uv.get(path, []), dtype=float).reshape(-1, 3)
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
                 tic = self.stream_tic.get(path, [])
-            if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=path.name); all_times.extend(times)
+            name = path.name if isinstance(path, Path) else path.label
+            if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=name); all_times.extend(times)
+            if show_tic and path in self.runs:
+                for trace in self.runs[path].auxiliary:
+                    self.uv.tic_view.addItem(pg.PlotCurveItem(trace.times, trace.values, pen=pg.mkPen("#9d8ce0", width=1.5, style=Qt.PenStyle.DotLine), name=trace.name))
+                    all_times.extend(trace.times.tolist())
             if show_tic:
                 for time, intensity, polarity in tic:
                     tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
@@ -668,7 +804,9 @@ class MainWindow(QMainWindow):
             bin_width = display_bin_width(low, high, pixels)
             stacked = {}
             for index, result in enumerate(self.histograms.values()):
-                x, y = rebin_histogram(*result[polarity], bin_width); bx, by, width = pixel_buckets(x, y, low, high, pixels); plot.data.append((x, y))
+                x, y = rebin_histogram(*result[polarity], bin_width); bx, by, width = pixel_buckets(x, y, low, high, pixels)
+                if len(x):
+                    plot.data.append((x, y))
                 if len(bx):
                     base = np.asarray([stacked.get(value, 0) for value in bx])
                     for value, height in zip(bx, by):

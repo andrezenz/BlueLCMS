@@ -12,8 +12,26 @@ from PySide6.QtWidgets import QApplication, QListWidgetItem
 
 from bluelcms.app import MainWindow
 from bluelcms import settings
+from bluelcms.vendor import MeasurementKey, VendorMeasurement
 from bluelcms.views import pixel_buckets, positive_zoom_range
 from test_mzml import write_mzml
+from test_vendor import write_agilent_sirslt, write_datx
+
+
+def vendor_measurement(tmp_path, spectra=True, name="ANZ254R4"):
+    """Build a synthetic Agilent run plus its two Advion polarities."""
+    agilent = write_agilent_sirslt(tmp_path / "Agilent" / f"2026_10_06_{name}.sirslt", count=40)
+    folder = tmp_path / "expression" / f"2026_10_6_11_19_59_{name}_1"
+    folder.mkdir(parents=True, exist_ok=True)
+    positive, negative = folder / f"{name}_Scan1_is1.datx", folder / f"{name}_Scan2_is2.datx"
+    write_datx(positive, negative=False, count=4)
+    write_datx(negative, negative=True, count=4)
+    if spectra:
+        for source in (positive, negative):
+            raw = source.parent / f"{source.stem}/{source.stem}.raw"
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_bytes(np.arange(4 * 3, dtype="<f4").tobytes())
+    return VendorMeasurement(MeasurementKey("2026_10_06", name.upper()), agilent, positive, negative)
 
 
 def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
@@ -63,6 +81,65 @@ def test_folder_load_and_region_histograms(tmp_path, monkeypatch):
         assert window.files.count() == 0
         window.files_listed(window.folder_token, None, "Share disconnected")
         assert "could not be read" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+
+
+def test_matched_vendor_measurement_is_one_sidebar_entry(tmp_path, monkeypatch):
+    """One Agilent run plus two Advion acquisitions must display as one measurement."""
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    measurement = vendor_measurement(tmp_path, spectra=True)
+    settings.set_data_folders([tmp_path])
+    window = MainWindow()
+    window.show()
+    try:
+        window.pool.waitForDone(); app.processEvents()
+        assert window.files.count() == 1
+        item = window.files.item(0)
+        source = item.data(Qt.ItemDataRole.UserRole)
+        assert source == measurement
+        assert "Agilent + Advion" in item.text()
+        assert measurement.agilent.name in item.toolTip()
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); app.processEvents()
+        assert window.run_data is not None
+        # Agilent exports a single 250 nm channel, so the control must follow it.
+        assert window.wavelength.value() == 250
+        assert len(window.run_data.scans) == 8
+        window.region_timer.stop()
+        window.calculate_region()
+        window.pool.waitForDone(); app.processEvents()
+        bars = [item for item in window.positive.items() if isinstance(item, pg.BarGraphItem)]
+        assert bars
+    finally:
+        window.close()
+
+
+def test_vendor_measurement_without_raw_shows_chromatograms_only(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    measurement = vendor_measurement(tmp_path, spectra=False)
+    settings.set_data_folders([tmp_path])
+    window = MainWindow()
+    window.show()
+    try:
+        window.pool.waitForDone(); app.processEvents()
+        assert window.files.count() == 1
+        assert "Chromatograms only" in window.files.item(0).toolTip()
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); app.processEvents()
+        assert window.run_data is not None
+        assert window.run_data.scans == ()
+        assert window.run_data.tic, "declared TIC must still be plotted"
+        window.region_timer.stop()
+        window.calculate_region()
+        window.pool.waitForDone(); app.processEvents()
+        bars = [item for item in window.positive.items() if isinstance(item, pg.BarGraphItem)]
+        assert not bars
+        assert "no MS1 data" in window.positive.plotItem.titleLabel.text
     finally:
         window.close()
 

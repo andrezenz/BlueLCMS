@@ -25,10 +25,28 @@ class DADScan:
 
 
 @dataclass(frozen=True)
+class NamedTrace:
+    """An auxiliary single-channel chromatogram, e.g. a CMS UV signal."""
+    name: str
+    times: np.ndarray
+    values: np.ndarray
+
+
+@dataclass(frozen=True)
 class Run:
     dad: tuple[DADScan, ...]
     scans: tuple[Scan, ...]
     skipped_scans: int = 0
+    # Vendor files may declare a total ion current without usable per-scan
+    # intensities, and may add chromatograms that are not DAD spectra.
+    tic: tuple[tuple[float, float, str], ...] = ()
+    auxiliary: tuple[NamedTrace, ...] = ()
+
+    def tic_points(self):
+        """(time, intensity, polarity) triples, preferring declared TIC values."""
+        if self.tic:
+            return self.tic
+        return tuple((scan.time, float(scan.intensity.sum()), scan.polarity) for scan in self.scans)
 
     @property
     def times(self):
@@ -41,6 +59,10 @@ class Run:
     @property
     def wavelengths(self):
         return self.uv_trace(254)[2]
+
+    def uv_wavelengths(self) -> np.ndarray:
+        """Every wavelength present in the loaded UV/DAD data, ascending."""
+        return np.unique(np.concatenate([scan.wavelength for scan in self.dad])) if self.dad else np.array([])
 
     def uv_trace(self, target: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         points = []

@@ -39,14 +39,16 @@ def source_sidecar(source: Path) -> Path:
     return source.with_suffix(source.suffix + ".bluelcms-integrations.json")
 
 
-def sidecar_candidates(source: Path, fallback_folder: Path) -> tuple[Path, Path]:
-    return source_sidecar(source), fallback_sidecar(source, fallback_folder)
+def sidecar_candidates(source: Path, fallback_folder: Path, beside_source: bool = True) -> tuple[Path, ...]:
+    """Candidate sidecar locations; read-only vendor folders store only locally."""
+    fallback = fallback_sidecar(source, fallback_folder)
+    return (source_sidecar(source), fallback) if beside_source else (fallback,)
 
 
-def load_integrations(source: Path, fallback_folder: Path) -> tuple[list[dict], Path | None, bool]:
+def load_integrations(source: Path, fallback_folder: Path, beside_source: bool = True) -> tuple[list[dict], Path | None, bool]:
     """Load matching records and report whether a found sidecar is stale."""
     fingerprint = source_fingerprint(source)
-    for path in sidecar_candidates(source, fallback_folder):
+    for path in sidecar_candidates(source, fallback_folder, beside_source):
         if not path.is_file():
             continue
         try:
@@ -59,11 +61,10 @@ def load_integrations(source: Path, fallback_folder: Path) -> tuple[list[dict], 
     return [], None, False
 
 
-def save_integrations(source: Path, fallback_folder: Path, integrations: list[dict]) -> Path:
+def save_integrations(source: Path, fallback_folder: Path, integrations: list[dict], beside_source: bool = True) -> Path:
     """Save beside a writable raw file, otherwise atomically fall back locally."""
     data = {"format": 1, "source": source_fingerprint(source), "integrations": integrations}
-    primary, fallback = sidecar_candidates(source, fallback_folder)
-    for path in (primary, fallback):
+    for path in sidecar_candidates(source, fallback_folder, beside_source):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             _write_json(path, data)
