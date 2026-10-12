@@ -13,11 +13,17 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
 
 ## Updates
 
-Use **Update → Update version…** in the source application to select a published
+Use **Update → Update version…** to select a published
 GitHub release, including prereleases. It downloads the selected source version
 and installs project dependencies before offering a restart. Updates refuse
 checkouts with local source changes and use only the official repository URL. Application settings,
 raw data, caches, and integration sidecars are not changed by an update.
+
+Packaged applications use the same release selector, downloading and installing
+the selected platform package instead of changing a Git checkout. Linux and
+macOS replace the installed application and then offer a restart. On Windows,
+the app closes first so the installer can replace locked files, then offers to
+restart when installation finishes.
 
 ## Installers
 
@@ -32,7 +38,7 @@ Run the manually triggered **Build website installer** workflow when a new
 website bootstrap download is needed. Its output is an Actions artifact for
 uploading to the project website; it is never committed to Git or published as
 a GitHub release asset. Packaged applications also check GitHub Releases on
-their first launch and offer to open the latest release download page when a
+their first launch and offer to select a release to install when a
 newer version is available.
 
 On Linux, extract the release archive and run `sh install.sh` from the extracted

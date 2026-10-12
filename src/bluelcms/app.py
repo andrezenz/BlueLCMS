@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, QProcess, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSplitter,
@@ -20,6 +20,7 @@ from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cac
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
+from . import package_updater
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
@@ -109,6 +110,17 @@ def measurement_state_icon(state):
         painter.setPen(QPen(QColor("#163c28"), 2)); painter.drawLine(16 if state == "source-cached" else 8, 15 if state == "source-cached" else 8, 19 if state == "source-cached" else 16, 15 if state == "source-cached" else 8)
     painter.end()
     return QIcon(canvas)
+
+
+def start_packaged_process(executable, arguments):
+    process = QProcess()
+    environment = QProcessEnvironment.systemEnvironment()
+    environment.insert("PYINSTALLER_RESET_ENVIRONMENT", "1")
+    process.setProcessEnvironment(environment)
+    process.setProgram(executable)
+    process.setArguments(arguments)
+    started, _ = process.startDetached()
+    return started
 
 
 def downloading_icon():
@@ -274,10 +286,7 @@ class MainWindow(QMainWindow):
         self.show_date_prefix.toggled.connect(self.set_show_date_prefix)
         menu.addAction(self.show_date_prefix)
         update_menu = self.menuBar().addMenu("Update")
-        if getattr(sys, "frozen", False):
-            update_actions = (("Check GitHub releases", lambda: self.check_packaged_release(True)),)
-        else:
-            update_actions = (("Update version…", self.select_release),)
+        update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
             action = QAction(text, self); action.triggered.connect(slot); update_menu.addAction(action)
         about_menu = self.menuBar().addMenu("About")
@@ -417,7 +426,10 @@ class MainWindow(QMainWindow):
 
     def select_release(self):
         self.statusBar().showMessage("Fetching available releases…")
-        self.submit(0, updater.available_versions, self.release_options_ready, updater.repository_root())
+        if getattr(sys, "frozen", False):
+            self.submit(0, releases.published_versions, self.release_options_ready)
+        else:
+            self.submit(0, updater.available_versions, self.release_options_ready, updater.repository_root())
 
     def release_options_ready(self, token, result, error):
         if error:
@@ -429,7 +441,33 @@ class MainWindow(QMainWindow):
         release, accepted = QInputDialog.getItem(self, "Update version", "GitHub version:", list(result), 0, False)
         if accepted and release:
             self.statusBar().showMessage(f"Downloading and installing {release}…")
-            self.submit(0, updater.update, self.updated, updater.repository_root(), result[release])
+            self.progress.setRange(0, 0); self.progress.setFormat("Downloading and installing…"); self.progress.show()
+            if getattr(sys, "frozen", False):
+                self.submit(0, package_updater.install, self.package_updated, result[release])
+            else:
+                self.submit(0, updater.update, self.updated, updater.repository_root(), result[release])
+
+    def package_updated(self, token, result, error):
+        self.progress.hide()
+        if error:
+            self.statusBar().showMessage("Update failed.")
+            QMessageBox.warning(self, "Update failed", error)
+            return
+        if "helper" in result:
+            answer = QMessageBox.question(self, "Install update", f"Downloaded {result['version']}. Close BlueLCMS to install it?\n\nThe installer will offer to restart when finished.")
+            if answer == QMessageBox.StandardButton.Yes:
+                if start_packaged_process("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", result["helper"]]):
+                    QApplication.quit()
+                else:
+                    QMessageBox.warning(self, "Update failed", "The installation helper could not be started.")
+            return
+        self.statusBar().showMessage(f"Installed {result['version']}. Restart to use it.")
+        answer = QMessageBox.question(self, "Update complete", f"Installed {result['version']}. Restart now?")
+        if answer == QMessageBox.StandardButton.Yes:
+            if start_packaged_process(result["executable"], []):
+                QApplication.quit()
+            else:
+                QMessageBox.warning(self, "Restart failed", "Restart BlueLCMS manually to use the installed version.")
 
     def update_to(self, target):
         answer = QMessageBox.question(self, "Confirm update", f"Update BlueLCMS to {target}?\n\nLocal source changes will prevent the update.")
@@ -439,6 +477,7 @@ class MainWindow(QMainWindow):
         self.submit(0, updater.update, self.updated, updater.repository_root(), target)
 
     def updated(self, token, result, error):
+        self.progress.hide()
         if error:
             self.statusBar().showMessage("Update failed; current application remains running.")
             QMessageBox.warning(self, "Update failed", error)
@@ -476,9 +515,9 @@ class MainWindow(QMainWindow):
             if manual:
                 QMessageBox.information(self, "BlueLCMS is current", "This packaged version is the latest GitHub release.")
             return
-        answer = QMessageBox.question(self, "BlueLCMS update available", f"GitHub release {result['tag']} is available. Open the download page?")
+        answer = QMessageBox.question(self, "BlueLCMS update available", f"GitHub release {result['tag']} is available. Select a version to install?")
         if answer == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl(result["url"]))
+            self.select_release()
 
     def cache_for(self, source):
         if source in self.cached_measurements:
@@ -932,4 +971,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.0"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.1"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()

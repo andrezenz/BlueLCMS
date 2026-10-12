@@ -61,6 +61,31 @@ def test_offline_cache_survives_refresh_and_restart(tmp_path, monkeypatch):
             window.close()
 
 
+def test_packaged_update_uses_release_selector_and_installer(tmp_path, monkeypatch):
+    from bluelcms import app as app_module, package_updater, releases
+
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    monkeypatch.setattr(app_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(MainWindow, "check_packaged_release", lambda *args: None)
+    window = MainWindow()
+    try:
+        update_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "Update")
+        assert [action.text() for action in update_menu.actions()] == ["Update version…"]
+        submitted = []
+        monkeypatch.setattr(window, "submit", lambda *args: submitted.append(args))
+        window.select_release()
+        assert submitted[-1][1] is releases.published_versions
+        monkeypatch.setattr(app_module.QInputDialog, "getItem", lambda *args: ("v1.0.1", True))
+        window.release_options_ready(0, {"v1.0.1": "refs/tags/v1.0.1"}, "")
+        assert submitted[-1][1] is package_updater.install
+        assert submitted[-1][-1] == "refs/tags/v1.0.1"
+    finally:
+        application.processEvents()
+        window.close()
+
+
 def test_vendor_cache_keeps_uv_tic_and_spectra_offline(tmp_path, monkeypatch):
     import shutil
     from bluelcms.app import cache_metadata

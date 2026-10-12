@@ -13,8 +13,9 @@ class ReleaseError(RuntimeError):
     pass
 
 
-def release(channel="stable") -> dict[str, object] | None:
-    url = RELEASES_URL if channel == "stable" else DEVELOPMENT_RELEASE_URL
+def release(channel="stable", tag=None) -> dict[str, object] | None:
+    from urllib.parse import quote
+    url = f"https://api.github.com/repos/andrezenz/BlueLCMS/releases/tags/{quote(tag, safe='')}" if tag else RELEASES_URL if channel == "stable" else DEVELOPMENT_RELEASE_URL
     request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "BlueLCMS"})
     try:
         with urlopen(request, timeout=5) as response:
