@@ -612,6 +612,37 @@ def test_mass_x_axis_wheel_zoom_anchors_cursor_and_leaves_intensity_unchanged():
         plot.close()
 
 
+def test_mass_hover_guideline_survives_redraw_without_changing_ranges():
+    from PySide6.QtCore import QPointF, QEvent
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.setXRange(690, 710, padding=0)
+        plot.setYRange(0, 100, padding=0)
+        application.processEvents()
+        plot.scene().sigMouseMoved.emit(plot.view.mapViewToScene(QPointF(698.3912, 50)))
+        assert plot.cursor_line.isVisible()
+        assert plot.cursor_line.value() == pytest.approx(698.3912)
+        assert plot.cursor_line.label.toPlainText() == "m/z 698.3912"
+        before = np.asarray(plot.view.viewRange())
+        plot.clear()
+        assert plot.cursor_line in plot.items()
+        plot.scene().sigMouseMoved.emit(plot.view.mapViewToScene(QPointF(702.1, 50)))
+        assert plot.cursor_line.value() == pytest.approx(702.1)
+        np.testing.assert_allclose(plot.view.viewRange(), before)
+        plot.scene().sigMouseMoved.emit(QPointF(-10, -10))
+        assert not plot.cursor_line.isVisible()
+        plot.scene().sigMouseMoved.emit(plot.view.mapViewToScene(QPointF(702.1, 50)))
+        QApplication.sendEvent(plot, QEvent(QEvent.Type.Leave))
+        assert not plot.cursor_line.isVisible()
+    finally:
+        plot.close()
+
+
 def test_cached_item_is_marked(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)

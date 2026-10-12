@@ -97,6 +97,8 @@ updates the existing shortcut. To remove the shortcut, delete
 In mass spectra, scroll over the bottom **m/z** axis to zoom horizontally around
 the cursor. Scrolling inside the plotting area zooms intensity while keeping
 zero fixed. Positive and negative spectra share the same m/z range.
+Hover inside either mass-spectrum plot to show a vertical cursor guideline and
+its m/z coordinate to four decimal places.
 
 **Settings → Automatically refresh sources every minute** enables background
 rescans of configured locations. It is enabled by default, remembers your

@@ -101,6 +101,34 @@ class MassPlot(pg.PlotWidget):
         self.data = []
         self.view.sigRangeChanged.connect(lambda *_: self.changed.emit())
         self.view.reset_requested.connect(self.reset)
+        self.cursor_line = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen("#ffd25a", width=1, style=Qt.PenStyle.DashLine),
+            label="m/z {value:.4f}",
+            labelOpts={"position": .95, "color": "#ffd25a", "fill": "#10212d"})
+        self.cursor_line.setZValue(20)
+        self.cursor_line.hide()
+        self.addItem(self.cursor_line, ignoreBounds=True)
+        self.scene().sigMouseMoved.connect(self.move_cursor)
+        # PlotWidget installs clear as an instance alias to PlotItem.clear.
+        self.clear = self.clear_spectra
+
+    def move_cursor(self, position):
+        if self.isEnabled() and self.view.sceneBoundingRect().contains(position):
+            self.cursor_line.show()
+            self.cursor_line.setPos(self.view.mapSceneToView(position).x())
+        else:
+            self.cursor_line.hide()
+
+    def leaveEvent(self, event):
+        self.cursor_line.hide()
+        super().leaveEvent(event)
+
+    def clear_spectra(self):
+        self.plotItem.clear()
+        # Histogram redraws clear data items; keep the hover overlay attached.
+        if hasattr(self, "cursor_line"):
+            self.addItem(self.cursor_line, ignoreBounds=True)
 
     def reset(self):
         if self.data:
@@ -142,6 +170,8 @@ class MassViewBox(ResetViewBox):
 
 
 def loading_overlay(plot, visible):
+    if visible and hasattr(plot, "cursor_line"):
+        plot.cursor_line.hide()
     if not hasattr(plot, "loading") or plot.loading.scene() is None:
         plot.loading = pg.TextItem("Loading…", color="#f0f0f0", anchor=(.5, .5))
         plot.loading.setZValue(100)

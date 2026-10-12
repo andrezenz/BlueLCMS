@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bluelcms"
-version = "1.0.2.dev2"
+version = "1.0.2.dev3"
 description = "Standalone LC-MS and DAD data viewer"
 readme = "README.md"
 license = {text = "MIT"}
