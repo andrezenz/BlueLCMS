@@ -25,7 +25,10 @@ def integrate_trace(times, signal, start: float, stop: float) -> float:
 
 
 def source_fingerprint(source: Path) -> dict:
-    stat = source.stat()
+    try:
+        stat = source.stat()
+    except OSError:
+        return {"path": str(source)}
     return {"path": str(source), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 

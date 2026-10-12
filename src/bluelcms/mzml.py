@@ -222,17 +222,24 @@ def _unpack_scans(data, prefix: str, times, constructor, extra=None):
     return tuple(constructor(time, axes[offsets[index]:offsets[index + 1]], values[offsets[index]:offsets[index + 1]], *(() if extra is None else (extra[index],))) for index, time in enumerate(times))
 
 
-def write_compact_cache(run: Run, path: Path) -> Path:
+def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path:
     """Persist only data BlueLCMS needs, using float32 arrays and zlib compression."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.part")
     dad = _pack_scans(run.dad, "wavelength") if run.dad else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
     ms = _pack_scans(run.scans, "mz") if run.scans else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
     payload = {
+        "source_metadata": np.array(source_metadata),
+        "tic": np.asarray([(time, value) for time, value, _ in run.tic]).reshape(-1, 2),
+        "tic_polarity": np.asarray([polarity for _, _, polarity in run.tic]),
+        "auxiliary_names": np.asarray([trace.name for trace in run.auxiliary]),
         "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
         "dad_times": np.asarray([scan.time for scan in run.dad]), "dad_shared": dad["shared"], "dad_axis": dad["axis"], "dad_intensity": dad["intensity"],
         "ms_times": np.asarray([scan.time for scan in run.scans]), "ms_polarity": np.asarray([scan.polarity for scan in run.scans]), "ms_shared": ms["shared"], "ms_axis": ms["axis"], "ms_intensity": ms["intensity"],
     }
+    for index, trace in enumerate(run.auxiliary):
+        payload[f"auxiliary_times_{index}"] = trace.times
+        payload[f"auxiliary_values_{index}"] = trace.values
     if not bool(dad["shared"]): payload["dad_offsets"] = dad["offsets"]
     if not bool(ms["shared"]): payload["ms_offsets"] = ms["offsets"]
     try:
@@ -251,11 +258,13 @@ def load_compact_cache(path: Path, dad_callback=None, scan_callback=None) -> Run
         dad = _unpack_scans(data, "dad", data["dad_times"], lambda time, axis, intensity: DADScan(float(time), axis, intensity))
         scans = _unpack_scans(data, "ms", data["ms_times"], lambda time, axis, intensity, polarity: Scan(float(time), str(polarity), axis, intensity), data["ms_polarity"])
         skipped = int(data["skipped_scans"])
+        tic = tuple((float(row[0]), float(row[1]), str(polarity)) for row, polarity in zip(data["tic"], data["tic_polarity"])) if "tic" in data else ()
+        auxiliary = tuple(NamedTrace(str(name), data[f"auxiliary_times_{index}"], data[f"auxiliary_values_{index}"]) for index, name in enumerate(data["auxiliary_names"])) if "auxiliary_names" in data else ()
     if dad_callback:
         for scan in dad: dad_callback(scan)
     if scan_callback:
         for scan in scans: scan_callback(scan)
-    return Run(dad, scans, skipped)
+    return Run(dad, scans, skipped, tic, auxiliary)
 
 
 

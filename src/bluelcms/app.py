@@ -1,6 +1,7 @@
 """Standalone Qt desktop entry point."""
 
 import os
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
-from .vendor import (VendorMeasurement, advion_raw_path, discover_vendor_measurements,
+from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
 
 
@@ -34,14 +35,14 @@ def vendor_display_name(measurement, show_date_prefix: bool) -> str:
 def integration_anchor(source):
     """Map a sidebar source to the file whose fingerprint identifies its integrations."""
     if isinstance(source, VendorMeasurement):
-        archive = next((item for item in sorted(source.agilent.iterdir()) if item.suffix.lower() == ".dx"), None)
+        archive = next((item for item in sorted(source.agilent.iterdir()) if item.suffix.lower() == ".dx"), None) if source.agilent.is_dir() else None
         return archive or source.agilent
     return source
 
 
 def integration_beside_source(source):
     """Vendor folders are usually read-only shares, so never write beside them."""
-    return not isinstance(source, VendorMeasurement)
+    return not isinstance(source, VendorMeasurement) and source.is_file()
 
 
 def measurement_tooltip(measurement) -> str:
@@ -58,6 +59,56 @@ def measurement_tooltip(measurement) -> str:
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
+
+
+def cache_metadata(source):
+    if isinstance(source, VendorMeasurement):
+        return json.dumps({"vendor": True, "date": source.key.date, "sample": source.key.sample,
+                           "replicate": source.key.replicate, "agilent": str(source.agilent),
+                           "positive": str(source.advion_positive), "negative": str(source.advion_negative)})
+    return json.dumps({"path": str(source)})
+
+
+def discover_cached_measurements(folder):
+    entries = {}
+    if folder is None or not folder.is_dir():
+        return entries
+    for cache in folder.glob("*.bluelcms.npz"):
+        try:
+            with np.load(cache, allow_pickle=False) as data:
+                metadata = json.loads(str(data["source_metadata"])) if "source_metadata" in data and str(data["source_metadata"]) else {}
+            if metadata.get("vendor"):
+                source = VendorMeasurement(MeasurementKey(metadata["date"], metadata["sample"], metadata["replicate"]),
+                                           Path(metadata["agilent"]), Path(metadata["positive"]), Path(metadata["negative"]))
+            else:
+                source = Path(metadata["path"]) if "path" in metadata else cache
+            entries[source] = cache
+        except (OSError, ValueError, KeyError):
+            continue
+    for cache in folder.iterdir():
+        if cache.is_file() and not cache.name.startswith(".") and cache.suffix.lower() in (".mzml", ".gz"):
+            entries[cache] = cache
+    return entries
+
+
+def source_available(source):
+    if isinstance(source, VendorMeasurement):
+        return source.agilent.is_dir() and source.advion_positive.is_file() and source.advion_negative.is_file()
+    return source.is_file()
+
+
+def measurement_state_icon(state):
+    """A source monitor, monitor with disk, or standalone disk."""
+    canvas = QPixmap(24, 24); canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setPen(QPen(QColor("#48a9ef" if state != "cache-only" else "#61c98b"), 2))
+    if state != "cache-only":
+        painter.drawRect(2, 2, 17, 12); painter.drawLine(10, 14, 10, 19); painter.drawLine(5, 19, 15, 19)
+    if state != "source-only":
+        painter.setBrush(QColor("#61c98b")); painter.drawRect(12 if state == "source-cached" else 4, 12 if state == "source-cached" else 4, 10 if state == "source-cached" else 16, 10 if state == "source-cached" else 16)
+        painter.setPen(QPen(QColor("#163c28"), 2)); painter.drawLine(16 if state == "source-cached" else 8, 15 if state == "source-cached" else 8, 19 if state == "source-cached" else 16, 15 if state == "source-cached" else 8)
+    painter.end()
+    return QIcon(canvas)
 
 
 def downloading_icon():
@@ -193,6 +244,7 @@ class MainWindow(QMainWindow):
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.integrations, self.integration_source = [], None
         self.discovered_measurements = {}
+        self.cached_measurements = {}
         self.load_token = self.region_token = self.folder_token = 0
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
@@ -225,9 +277,13 @@ class MainWindow(QMainWindow):
         if getattr(sys, "frozen", False):
             update_actions = (("Check GitHub releases", lambda: self.check_packaged_release(True)),)
         else:
-            update_actions = (("Check for updates", self.check_updates), ("Update to dev", lambda: self.update_to("dev")), ("Update to stable", lambda: self.update_to("stable")), ("Select release version…", self.select_release))
+            update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
             action = QAction(text, self); action.triggered.connect(slot); update_menu.addAction(action)
+        about_menu = self.menuBar().addMenu("About")
+        about_action = QAction("About BlueLCMS", self)
+        about_action.triggered.connect(self.show_about)
+        about_menu.addAction(about_action)
         self.files, self.folder_label = QListWidget(), QLabel("Choose a data folder in Settings")
         self.files.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.files.itemSelectionChanged.connect(self.select_files)
@@ -236,6 +292,7 @@ class MainWindow(QMainWindow):
         self.wavelength.valueChanged.connect(self.draw_uv)
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.draw_uv)
         self.cache_expiry = QSpinBox(); self.cache_expiry.setRange(0, 365); self.cache_expiry.setValue(settings.cache_expiry_days()); self.cache_expiry.setSuffix(" days")
+        self.cache_expiry.setSpecialValueText("Never")
         self.cache_expiry.setToolTip("Cached files are automatically removed after this many days (0 = never expire)")
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
@@ -265,7 +322,7 @@ class MainWindow(QMainWindow):
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
         self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
-        if self.folders: self.refresh_files()
+        if self.folders or settings.cache_folder(): self.refresh_files()
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
         if removed:
             self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
@@ -310,7 +367,8 @@ class MainWindow(QMainWindow):
         initial = settings.cache_folder() or Path.home()
         if folder := QFileDialog.getExistingDirectory(self, "Choose local mzML cache folder", str(initial)):
             settings.set_cache_folder(Path(folder))
-            self.refresh_cache_indicators()
+            self.cached_measurements = {}
+            self.refresh_files()
             self.statusBar().showMessage(f"mzML cache folder: {folder}")
 
     def set_show_date_prefix(self, show):
@@ -340,6 +398,10 @@ class MainWindow(QMainWindow):
         if not QProcess.startDetached(terminal, ["-e", sys.executable, str(root / "debug_launch.py")]):
             QMessageBox.warning(self, "Debug terminal failed", "The system terminal could not be started.")
 
+    def show_about(self):
+        QMessageBox.about(self, "About BlueLCMS",
+                          f"BlueLCMS\nVersion {QApplication.applicationVersion()}\n\nLC-MS and DAD data viewer")
+
     def check_updates(self):
         self.statusBar().showMessage("Checking GitHub for updates…")
         self.submit(0, updater.status, self.update_status_ready, updater.repository_root(), True)
@@ -355,15 +417,19 @@ class MainWindow(QMainWindow):
 
     def select_release(self):
         self.statusBar().showMessage("Fetching available releases…")
-        self.submit(0, updater.status, self.release_options_ready, updater.repository_root(), True)
+        self.submit(0, updater.available_versions, self.release_options_ready, updater.repository_root())
 
     def release_options_ready(self, token, result, error):
         if error:
             QMessageBox.warning(self, "Release check failed", error)
             return
-        release, accepted = QInputDialog.getItem(self, "Select BlueLCMS release", "Version:", result["releases"], 0, False)
+        if not result:
+            QMessageBox.information(self, "Update version", "No versions are available on GitHub.")
+            return
+        release, accepted = QInputDialog.getItem(self, "Update version", "GitHub version:", list(result), 0, False)
         if accepted and release:
-            self.update_to(release)
+            self.statusBar().showMessage(f"Downloading and installing {release}…")
+            self.submit(0, updater.update, self.updated, updater.repository_root(), result[release])
 
     def update_to(self, target):
         answer = QMessageBox.question(self, "Confirm update", f"Update BlueLCMS to {target}?\n\nLocal source changes will prevent the update.")
@@ -415,12 +481,16 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(result["url"]))
 
     def cache_for(self, source):
-        return cached_path(source, settings.cache_folder())
+        if source in self.cached_measurements:
+            return self.cached_measurements[source]
+        return cached_path(source.agilent if isinstance(source, VendorMeasurement) else source, settings.cache_folder())
 
     def legacy_cache_for(self, source):
         return legacy_cached_path(source, settings.cache_folder())
 
     def load_source_label(self, path, source):
+        if self.cached_measurements.get(path) == source:
+            return "compact local cache" if source.name.endswith(".bluelcms.npz") else "cached mzML"
         if source == path:
             return "original remote mzML" if is_afp_path(path) else "original local mzML"
         return "compact local cache" if source.name.endswith(".bluelcms.npz") else "cached mzML"
@@ -428,15 +498,19 @@ class MainWindow(QMainWindow):
     def refresh_cache_indicators(self):
         for index in range(self.files.count()):
             item = self.files.item(index); path = item.data(Qt.ItemDataRole.UserRole)
+            cache = self.cache_for(path)
+            legacy = None if isinstance(path, VendorMeasurement) else self.legacy_cache_for(path)
+            cached = bool((cache and cache.is_file()) or (legacy and legacy.is_file()))
+            available = source_available(path) and path != cache
+            state = "source-cached" if available and cached else "cache-only" if cached else "source-only"
+            item.setIcon(measurement_state_icon(state))
+            item.setData(Qt.ItemDataRole.UserRole + 1, state)
+            tooltip = {"source-only": "Remote/source only", "source-cached": "Remote/source + cached locally", "cache-only": "Cached only — original source unavailable"}[state]
             if isinstance(path, VendorMeasurement):
-                continue
-            cache = self.cache_for(path); legacy = self.legacy_cache_for(path)
-            if cache and cache.is_file():
-                item.setIcon(compacted_icon()); item.setToolTip("Cached locally (compact native-resolution cache)")
-            elif legacy and legacy.is_file():
-                item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)); item.setToolTip("Cached locally (mzML copy)")
+                tooltip += "\n" + measurement_tooltip(path)
             else:
-                item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)); item.setToolTip("Original source")
+                tooltip += f"\n{path}"
+            item.setToolTip(tooltip)
 
     def set_download_state(self, path, active):
         if isinstance(path, VendorMeasurement):
@@ -455,18 +529,19 @@ class MainWindow(QMainWindow):
         if not self.folders and self.folder:
             self.folders = [self.folder]
         self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_token += 1
-        if not self.folders:
+        if not self.folders and settings.cache_folder() is None:
             self.folder_label.setText("Add mzML locations in Settings")
             self.statusBar().showMessage("No mzML locations configured.")
             return
         self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
         self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
-        self.pending_discoveries = len(self.folders) * 2
+        self.pending_discoveries = len(self.folders) * 2 + 1
         self.set_loading(True)
+        self.submit(self.folder_token, discover_cached_measurements, self.caches_listed, settings.cache_folder())
         if len(self.folders) >= 2:
             agilent_folder, advion_folder = self.folders[0], self.folders[1]
         else:
-            agilent_folder, advion_folder = self.folders[0], None
+            agilent_folder, advion_folder = self.folders[0] if self.folders else None, None
         for folder in self.folders:
             self.submit(self.folder_token, discover_files, self.files_listed, folder)
             self.submit(
@@ -483,7 +558,19 @@ class MainWindow(QMainWindow):
         if self.pending_discoveries:
             return
         self.set_loading(False)
-        for path in sorted(self.discovered_paths, key=lambda value: value.name.casefold()):
+        # Reconcile old caches regardless of which discovery worker finished first.
+        for source in self.discovered_paths:
+            for expected in (cached_path(source, settings.cache_folder()), legacy_cached_path(source, settings.cache_folder())):
+                if expected in self.cached_measurements:
+                    self.cached_measurements.pop(expected)
+                    self.cached_measurements.setdefault(source, expected)
+        paths = set(self.discovered_paths)
+        for source in self.cached_measurements:
+            if isinstance(source, VendorMeasurement):
+                self.discovered_measurements.setdefault(source.key, source)
+            else:
+                paths.add(source)
+        for path in sorted(paths, key=lambda value: value.name.casefold()):
             item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         for measurement in sorted(self.discovered_measurements.values(), key=lambda value: value.key, reverse=True):
             item = QListWidgetItem(vendor_display_name(measurement, settings.show_date_prefix()))
@@ -505,6 +592,18 @@ class MainWindow(QMainWindow):
         elif paths: self.discovered_paths.extend(paths)
         self.discovery_finished()
 
+    def caches_listed(self, token, entries, error):
+        if token != self.folder_token: return
+        self.cached_measurements = entries or {}
+        if error: self.discovery_errors.append(error)
+        # Older caches without source metadata can still be matched by filename.
+        for source in self.discovered_paths:
+            expected = cached_path(source, settings.cache_folder())
+            if expected in self.cached_measurements:
+                self.cached_measurements.pop(expected)
+                self.cached_measurements[source] = expected
+        self.discovery_finished()
+
     def measurements_listed(self, token, measurements, error):
         if token != self.folder_token: return
         if error: self.discovery_errors.append(error)
@@ -521,16 +620,18 @@ class MainWindow(QMainWindow):
         missing = [p for p in paths if p not in self.runs]
         if missing: self.set_loading(True)
         for path in missing:
-            if isinstance(path, VendorMeasurement):
+            cache = self.cache_for(path)
+            if isinstance(path, VendorMeasurement) and not (cache and cache.is_file()):
                 self.submit_vendor_load(token, path)
                 continue
             cache = self.cache_for(path)
-            legacy = self.legacy_cache_for(path)
+            legacy = None if isinstance(path, VendorMeasurement) else self.legacy_cache_for(path)
             source = cache if cache and cache.is_file() else legacy if legacy and legacy.is_file() else path
             source_label = self.load_source_label(path, source)
             self.set_download_state(path, source == path and is_afp_path(path))
             size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
-            self.statusBar().showMessage(f"Loading {source_label}: {path.name} ({size:.1f} MiB)…")
+            name = path.label if isinstance(path, VendorMeasurement) else path.name
+            self.statusBar().showMessage(f"Loading {source_label}: {name} ({size:.1f} MiB)…")
             self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {source_label}…"); self.progress.show()
             self.submit_load(token, path, source, source_label, lambda t, r, e, p=path: self.loaded(t, p, r, e))
         self.draw_uv(); self.timer.start()
@@ -570,19 +671,12 @@ class MainWindow(QMainWindow):
         self.stream_tic.pop(path, None)
         self.run_data = run
         if isinstance(path, VendorMeasurement):
-            # Vendor runs are read in place; only mzML sources are cached.
             self.snap_wavelength(run)
-            self.progress.hide()
-            self.set_download_state(path, False)
-            if len(self.runs) == len(self.files.selectedItems()):
-                self.uv.integration_enabled = len(self.runs) == 1
-                self.refresh_integrations()
-                self.set_loading(False); self.draw_uv(); self.timer.start()
-            return
         cache = self.cache_for(path)
         if cache and not cache.is_file():
-            self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {path.name}…"); self.progress.show()
-            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache)
+            name = path.label if isinstance(path, VendorMeasurement) else path.name
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {name}…"); self.progress.show()
+            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
         else:
             self.set_download_state(path, False)
             self.progress.hide()
@@ -681,14 +775,16 @@ class MainWindow(QMainWindow):
     def cached(self, token, path, cache, error):
         if token != self.load_token:
             return
+        name = path.label if isinstance(path, VendorMeasurement) else path.name
         if error:
             self.set_download_state(path, False)
             self.progress.hide()
-            self.statusBar().showMessage(f"Loaded {path.name}, but local caching failed: {error}")
+            self.statusBar().showMessage(f"Loaded {name}, but local caching failed: {error}")
             return
+        self.cached_measurements[path] = cache
         self.refresh_cache_indicators()
         self.progress.hide()
-        self.statusBar().showMessage(f"Cached {path.name} locally")
+        self.statusBar().showMessage(f"Cached {name} locally")
 
     def show_progress(self, action, path, copied, total):
         if total:
@@ -836,4 +932,4 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("0.4.6"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.0"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()

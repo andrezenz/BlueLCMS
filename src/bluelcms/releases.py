@@ -33,3 +33,30 @@ def release(channel="stable") -> dict[str, object] | None:
 
 def latest_release() -> dict[str, object] | None:
     return release()
+
+
+def published_versions() -> dict[str, str]:
+    """Return published release labels mapped to their Git tags."""
+    versions = {}
+    page = 1
+    while True:
+        request = Request(
+            f"https://api.github.com/repos/andrezenz/BlueLCMS/releases?per_page=100&page={page}",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "BlueLCMS"})
+        try:
+            with urlopen(request, timeout=10) as response:
+                entries = json.load(response)
+        except (HTTPError, URLError) as error:
+            raise ReleaseError(f"GitHub releases could not be loaded: {error}") from error
+        for entry in entries:
+            tag = entry.get("tag_name")
+            if entry.get("draft") or not isinstance(tag, str):
+                continue
+            name = entry.get("name") or tag
+            label = name if name == tag else f"{name} ({tag})"
+            if entry.get("prerelease"):
+                label += " — prerelease"
+            versions[label] = f"refs/tags/{tag}"
+        if len(entries) < 100:
+            return versions
+        page += 1

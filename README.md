@@ -13,10 +13,10 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
 
 ## Updates
 
-Use the **Update** menu to check the official GitHub repository, fast-forward
-to `dev` or `stable`, or select an immutable `v*` release tag. Updates refuse
-checkouts with local source changes, use only the official repository URL, and
-reinstall project dependencies before offering a restart. Application settings,
+Use **Update → Update version…** in the source application to select a published
+GitHub release, including prereleases. It downloads the selected source version
+and installs project dependencies before offering a restart. Updates refuse
+checkouts with local source changes and use only the official repository URL. Application settings,
 raw data, caches, and integration sidecars are not changed by an update.
 
 ## Installers
@@ -155,8 +155,12 @@ folder for compact mzML analysis caches. After a file has fully loaded,
 ⌊Blue⌋ LCMS writes a compact local analysis cache in the background. It retains
 full DAD spectra plus native-grid MS1 intensities, scan times, and polarities,
 while omitting unused mzML XML and metadata. Later selections use that local
-cache instead of reading the original mzML. A save icon and **Cached locally**
-tooltip identify cached entries in the sidebar. Cache entries are written
+cache instead of reading the original mzML. Sidebar icons distinguish **source
+only** (monitor), **source plus cache** (monitor with disk), and **cached only**
+(disk). Cached measurements remain visible and loadable when their original
+source is unavailable, including after restarting. Matched Agilent+Advion
+measurements are cached too, including their TIC and auxiliary UV traces.
+Cache entries are written
 atomically and include a hash of the full remote path, so equal filenames from
 different shares cannot collide. Re-selecting the cache folder or deleting its
 file makes the next load use the remote source again.
@@ -167,7 +171,8 @@ selected file's size. After a remote parse succeeds, it switches to compacting
 the local cache.
 
 Set **Cache expiry** in the left sidebar to remove cached entries after a chosen
-number of days; the default is seven days and zero disables automatic expiry.
+number of days; the default is **Never** (zero disables automatic expiry).
+Previously saved expiry preferences are retained.
 
 For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The

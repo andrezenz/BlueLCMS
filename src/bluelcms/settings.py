@@ -60,7 +60,7 @@ def set_show_tic(show: bool) -> None:
 
 
 def cache_expiry_days() -> int:
-    return settings().value("cache_expiry_days", 7, type=int)
+    return settings().value("cache_expiry_days", 0, type=int)
 
 
 def set_cache_expiry_days(days: int) -> None:

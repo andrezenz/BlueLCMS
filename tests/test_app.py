@@ -18,6 +18,83 @@ from test_mzml import write_mzml
 from test_vendor import write_agilent_sirslt, write_datx
 
 
+def test_offline_cache_survives_refresh_and_restart(tmp_path, monkeypatch):
+    from bluelcms.app import cache_metadata
+    from bluelcms.mzml import load_run, write_compact_cache
+    from bluelcms.folders import cached_path
+
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    source = write_mzml(remote / "sample.mzML")
+    cache_folder = tmp_path / "cache"
+    settings.set_cache_folder(cache_folder)
+    settings.set_data_folders([remote])
+    write_compact_cache(load_run(source), cached_path(source, cache_folder), cache_metadata(source))
+    online = MainWindow()
+    try:
+        online.pool.waitForDone(); app.processEvents()
+        assert online.files.count() == 1
+        assert online.files.item(0).data(Qt.ItemDataRole.UserRole + 1) == "source-cached"
+    finally:
+        online.close()
+    source.unlink()
+    remote.rmdir()
+    for _ in range(2):
+        window = MainWindow()
+        try:
+            window.pool.waitForDone(); app.processEvents()
+            assert window.files.count() == 1
+            item = window.files.item(0)
+            assert item.text() == "sample.mzML"
+            assert item.data(Qt.ItemDataRole.UserRole) == source
+            assert item.data(Qt.ItemDataRole.UserRole + 1) == "cache-only"
+            assert window.cache_expiry.value() == 0
+            window.files.setCurrentRow(0)
+            window.pool.waitForDone(); app.processEvents()
+            assert window.run_data is not None
+            assert window.run_data.scans
+            assert not window.loading_timer.isActive()
+        finally:
+            window.close()
+
+
+def test_vendor_cache_keeps_uv_tic_and_spectra_offline(tmp_path, monkeypatch):
+    import shutil
+    from bluelcms.app import cache_metadata
+    from bluelcms.mzml import write_compact_cache
+    from bluelcms.vendor import load_vendor_measurement
+    from bluelcms.folders import cached_path
+
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    source_root = tmp_path / "remote"
+    measurement = vendor_measurement(source_root)
+    original = load_vendor_measurement(measurement)
+    cache_folder = tmp_path / "cache"
+    settings.set_cache_folder(cache_folder)
+    settings.set_data_folders([source_root])
+    write_compact_cache(original, cached_path(measurement.agilent, cache_folder), cache_metadata(measurement))
+    shutil.rmtree(source_root)
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); app.processEvents()
+        assert window.files.count() == 1
+        assert window.files.item(0).data(Qt.ItemDataRole.UserRole + 1) == "cache-only"
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); app.processEvents()
+        assert len(window.run_data.scans) == len(original.scans)
+        assert window.run_data.tic == original.tic
+        assert window.run_data.auxiliary[0].name == "UV Scan"
+        np.testing.assert_array_equal(window.run_data.auxiliary[0].values, original.auxiliary[0].values)
+        assert window.wavelength.value() == 250
+    finally:
+        window.close()
+
+
 def vendor_measurement(tmp_path, spectra=True, name="ANZ254R4"):
     """Build a synthetic Agilent run plus its two Advion polarities."""
     agilent = write_agilent_sirslt(tmp_path / "Agilent" / f"2026_10_06_{name}.sirslt", count=40)
@@ -223,11 +300,14 @@ def test_cached_item_is_marked(tmp_path, monkeypatch):
         item.setData(Qt.ItemDataRole.UserRole, remote)
         window.files.addItem(item)
         window.refresh_cache_indicators()
-        assert item.toolTip() == "Original source"
+        assert item.data(Qt.ItemDataRole.UserRole + 1) == "source-only"
         cache = window.cache_for(remote)
         cache.parent.mkdir(); cache.touch()
         window.refresh_cache_indicators()
-        assert item.toolTip() == "Cached locally (compact native-resolution cache)"
+        assert item.data(Qt.ItemDataRole.UserRole + 1) == "source-cached"
+        remote.unlink()
+        window.refresh_cache_indicators()
+        assert item.data(Qt.ItemDataRole.UserRole + 1) == "cache-only"
         window.set_download_state(remote, True)
         assert item.toolTip() == "Downloading remote source…"
     finally:

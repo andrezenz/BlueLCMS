@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from .releases import published_versions
+
 
 OFFICIAL_ORIGINS = {
     "https://github.com/andrezenz/BlueLCMS.git",
@@ -44,6 +46,14 @@ def releases(root: Path) -> list[str]:
     return [tag for tag in _run(root, "tag", "--list", "v*", "--sort=-version:refname").splitlines() if tag]
 
 
+def available_versions(root: Path) -> dict:
+    """List published GitHub application releases, including prereleases."""
+    origin = _run(root, "remote", "get-url", "origin")
+    if origin not in OFFICIAL_ORIGINS:
+        raise UpdateError("Updates are allowed only from the official BlueLCMS GitHub repository.")
+    return published_versions()
+
+
 def status(root: Path, fetch_remote: bool = False) -> dict:
     if fetch_remote:
         fetch(root)
@@ -56,6 +66,17 @@ def status(root: Path, fetch_remote: bool = False) -> dict:
 
 
 def update(root: Path, target: str) -> dict:
+    if target.startswith("refs/"):
+        if target not in available_versions(root).values():
+            raise UpdateError(f"Unknown update target: {target}")
+        validate_checkout(root)
+        _run(root, "fetch", "origin", target)
+        _run(root, "switch", "--detach", "FETCH_HEAD")
+        python = root / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        result = subprocess.run([str(python), "-m", "pip", "install", "--editable", str(root)], cwd=root, text=True, capture_output=True)
+        if result.returncode:
+            raise UpdateError(f"Updated source, but dependency installation failed:\n{result.stderr.strip()}")
+        return status(root)
     fetch(root)
     if target in BRANCHES:
         _run(root, "switch", target)
