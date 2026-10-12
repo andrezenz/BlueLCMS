@@ -4,6 +4,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import pytest
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
@@ -83,6 +84,203 @@ def test_packaged_update_uses_release_selector_and_installer(tmp_path, monkeypat
         assert submitted[-1][-1] == "refs/tags/v1.0.1"
     finally:
         application.processEvents()
+        window.close()
+
+
+def test_background_refresh_preserves_selection_and_toggle(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    folder = tmp_path / "remote"
+    folder.mkdir()
+    source = write_mzml(folder / "first.mzML")
+    settings.set_data_folders([folder])
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        assert window.source_refresh_timer.isActive()
+        assert window.source_refresh_timer.interval() == 60000
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); application.processEvents()
+        run = window.run_data
+        window.uv.region.setBounds((0, 2))
+        window.uv.region.setRegion((0.6, 0.9))
+        added = write_mzml(folder / "second.mzML")
+        window.refresh_files(background=True)
+        window.pool.waitForDone(); application.processEvents()
+        assert window.files.count() == 2
+        assert {item.data(Qt.ItemDataRole.UserRole) for item in window.files.selectedItems()} == {source}
+        assert window.run_data is run
+        np.testing.assert_allclose(window.uv.region.getRegion(), [0.6, 0.9])
+        assert added in {window.files.item(index).data(Qt.ItemDataRole.UserRole) for index in range(2)}
+        window.auto_refresh_sources.setChecked(False)
+        assert not window.source_refresh_timer.isActive()
+        assert not settings.auto_refresh_sources()
+    finally:
+        window.close()
+    reopened = MainWindow()
+    try:
+        assert not reopened.auto_refresh_sources.isChecked()
+        assert not reopened.source_refresh_timer.isActive()
+    finally:
+        reopened.close()
+
+
+def test_startup_prompts_for_missing_cache_folder(tmp_path, monkeypatch):
+    from bluelcms import app as app_module
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    calls = []
+    monkeypatch.setattr(window, "check_packaged_release", lambda: calls.append("stable check"))
+    monkeypatch.setattr(window, "choose_cache_folder", lambda: calls.append("choose cache"))
+    monkeypatch.setattr(app_module.QMessageBox, "question", lambda *args: app_module.QMessageBox.StandardButton.Yes)
+    try:
+        window.startup_checks()
+        assert calls == ["stable check", "choose cache"]
+        calls.clear()
+        settings.set_cache_folder(tmp_path / "cache")
+        window.startup_checks()
+        assert calls == ["stable check"]
+    finally:
+        window.close()
+
+
+class FakePausableLoad:
+    def __init__(self):
+        self.paused = False
+        self.resumed = False
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+        self.resumed = True
+
+
+def test_load_job_retains_parser_state_while_paused(monkeypatch, tmp_path):
+    from threading import Event, Thread
+    from bluelcms import app as app_module
+    from bluelcms.mzml import DADScan, Run
+
+    observed = []
+    calls = []
+    paused = Event()
+    job = app_module.LoadJob(1, tmp_path / "remote.mzML", 254)
+    def parse(path, progress, dad_callback, scan_callback):
+        calls.append(path)
+        scans = []
+        for index in range(3):
+            scan = DADScan(index, np.array([254]), np.array([index]))
+            dad_callback(scan)
+            scans.append(scan)
+            observed.append(index)
+            if index == 0:
+                job.pause()
+                paused.set()
+        return Run(tuple(scans), ())
+    monkeypatch.setattr(app_module, "load_run", parse)
+    worker = Thread(target=job.run)
+    worker.start()
+    try:
+        assert paused.wait(2)
+        assert observed == [0]
+        assert worker.is_alive()
+        job.resume()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert observed == [0, 1, 2]
+        assert len(calls) == 1
+    finally:
+        job.resume()
+        worker.join(2)
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+def test_ctrl_selection_queues_without_restarting_active_load(tmp_path, monkeypatch, first_fails):
+    from bluelcms.mzml import Run
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    first = write_mzml(tmp_path / "first.mzML")
+    second = write_mzml(tmp_path / "second.mzML")
+    settings.set_data_folders([tmp_path])
+    window = MainWindow()
+    started = []
+    def submit(token, path, source, label, callback):
+        started.append((token, path))
+        window.load_jobs[path] = FakePausableLoad()
+    monkeypatch.setattr(window, "submit_load", submit)
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        window.files.item(0).setSelected(True)
+        first_token = window.load_token
+        window.streamed_uv_points(first_token, first, [(1, 42, 254)])
+        window.files.item(1).setSelected(True)
+        assert started == [(first_token, first)]
+        assert window.load_queue == [second]
+        assert window.stream_uv[first] == [(1, 42, 254)]
+        assert "[1/2]" in window.progress.format()
+        window.loaded(first_token, first, Run((), ()), "remote disconnected" if first_fails else "")
+        assert len(started) == 2
+        assert started[-1][1] == second
+        assert "[2/2]" in window.progress.format()
+        window.loaded(window.load_token, second, Run((), ()), "")
+        assert window.active_load is None
+        assert set(window.runs) == ({second} if first_fails else {first, second})
+        assert not window.loading_timer.isActive()
+    finally:
+        window.close()
+
+
+def test_single_selection_preempts_then_caches_previous_without_display(tmp_path, monkeypatch):
+    from bluelcms.mzml import Run, write_compact_cache
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    first = write_mzml(tmp_path / "first.mzML")
+    second = write_mzml(tmp_path / "second.mzML")
+    settings.set_data_folders([tmp_path])
+    window = MainWindow()
+    started = []
+    cache_requests = []
+    def submit(token, path, source, label, callback):
+        started.append((token, path))
+        window.load_jobs[path] = FakePausableLoad()
+    monkeypatch.setattr(window, "submit_load", submit)
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        settings.set_cache_folder(tmp_path / "cache")
+        monkeypatch.setattr(window, "submit", lambda *args: cache_requests.append(args))
+        window.files.setCurrentRow(0)
+        first_token = window.load_token
+        first_job = window.load_jobs[first]
+        window.files.setCurrentRow(1)
+        second_token = window.load_token
+        assert first_job.paused
+        assert window.active_load == second
+        assert [path for _, path in started] == [first, second]
+        foreground = Run((), ())
+        window.loaded(second_token, second, foreground, "")
+        assert first_job.resumed, "resume background reading as soon as foreground data is ready"
+        request = cache_requests.pop(0)
+        cache = write_compact_cache(*request[3:])
+        window.cached(second_token, second, cache, "")
+        assert first_job.resumed
+        assert window.active_load == first
+        assert window.run_data is foreground
+        window.loaded(first_token, first, Run((), ()), "")
+        request = cache_requests.pop(0)
+        cache = write_compact_cache(*request[3:])
+        window.cached(first_token, first, cache, "")
+        assert window.active_load is None
+        assert set(window.runs) == {second}
+        assert window.run_data is foreground
+        assert window.cache_for(first).is_file()
+        assert len(started) == 2, "resume must not start another download"
+    finally:
         window.close()
 
 

@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import sys
+from threading import Event
 from pathlib import Path
 
 import numpy as np
@@ -168,7 +169,24 @@ class Job(QRunnable):
         except Exception as error: self.signals.done.emit(self.token, None, str(error))
 
 
-class VendorLoadJob(Job):
+class PausableLoadJob(Job):
+    def __init__(self, token, function, *args):
+        super().__init__(token, function, *args)
+        self.ready = Event()
+        self.ready.set()
+
+    def pause(self):
+        self.ready.clear()
+
+    def resume(self):
+        self.ready.set()
+
+    def report_progress(self, done, total):
+        self.ready.wait()
+        self.signals.progress.emit(self.token, done, total)
+
+
+class VendorLoadJob(PausableLoadJob):
     """Load one matched Agilent + Advion measurement, reporting step progress."""
 
     def __init__(self, token, measurement):
@@ -179,14 +197,14 @@ class VendorLoadJob(Job):
         try:
             result = load_vendor_measurement(
                 self.measurement,
-                progress=lambda done, total: self.signals.progress.emit(self.token, done, total))
+                progress=self.report_progress)
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
         else:
             self.signals.done.emit(self.token, result, "")
 
 
-class LoadJob(Job):
+class LoadJob(PausableLoadJob):
     def __init__(self, token, path, wavelength):
         super().__init__(token, load_run, path)
         self.wavelength = wavelength
@@ -205,17 +223,20 @@ class LoadJob(Job):
                 tic = []
 
         def stream(scan):
+            self.ready.wait()
             if len(scan.wavelength) and scan.wavelength.min() <= self.wavelength <= scan.wavelength.max():
                 index = int(np.argmin(np.abs(scan.wavelength - self.wavelength)))
                 points.append((scan.time, scan.intensity[index], scan.wavelength[index]))
                 if len(points) >= 64:
                     flush()
         def stream_ms(scan):
+            self.ready.wait()
             tic.append((scan.time, float(scan.intensity.sum()), scan.polarity))
             if len(tic) >= 64:
                 flush()
         try:
-            result = load_run(self.args[0], progress=lambda copied, total: self.signals.progress.emit(self.token, copied, total), dad_callback=stream, scan_callback=stream_ms)
+            self.ready.wait()
+            result = load_run(self.args[0], progress=self.report_progress, dad_callback=stream, scan_callback=stream_ms)
             flush()
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
@@ -257,7 +278,19 @@ class MainWindow(QMainWindow):
         self.integrations, self.integration_source = [], None
         self.discovered_measurements = {}
         self.cached_measurements = {}
+        self.background_discovery = False
+        self.pending_discoveries = 0
+        self.source_refresh_timer = QTimer(self)
+        self.source_refresh_timer.setInterval(60000)
+        self.source_refresh_timer.timeout.connect(lambda: self.refresh_files(background=True))
         self.load_token = self.region_token = self.folder_token = 0
+        self.load_queue = []
+        self.active_load = None
+        self.failed_loads = set()
+        self.load_jobs = {}
+        self.paused_loads = {}
+        self.deferred_results = {}
+        self.load_sequence = 0
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
@@ -285,6 +318,13 @@ class MainWindow(QMainWindow):
         self.show_date_prefix.setChecked(settings.show_date_prefix())
         self.show_date_prefix.toggled.connect(self.set_show_date_prefix)
         menu.addAction(self.show_date_prefix)
+        self.auto_refresh_sources = QAction("Automatically refresh sources every minute", self)
+        self.auto_refresh_sources.setCheckable(True)
+        self.auto_refresh_sources.setChecked(settings.auto_refresh_sources())
+        self.auto_refresh_sources.toggled.connect(self.set_auto_refresh_sources)
+        menu.addAction(self.auto_refresh_sources)
+        if self.auto_refresh_sources.isChecked():
+            self.source_refresh_timer.start()
         update_menu = self.menuBar().addMenu("Update")
         update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
@@ -335,14 +375,13 @@ class MainWindow(QMainWindow):
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
         if removed:
             self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
-        if getattr(sys, "frozen", False):
-            QTimer.singleShot(0, self.check_packaged_release)
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
 
     def submit_load(self, token, path, source, source_label, callback):
         job = LoadJob(token, source, self.wavelength.value())
+        self.load_jobs[path] = job
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, copied, total, p=path, label=source_label: self.load_progress(t, p, label, copied, total))
         job.signals.uv_points.connect(lambda t, points, p=path: self.streamed_uv_points(t, p, points))
@@ -492,17 +531,19 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Update complete. Restart BlueLCMS to use the new version.")
 
+    def startup_checks(self):
+        self.check_packaged_release()
+        if settings.cache_folder() is None:
+            answer = QMessageBox.question(self, "No cache folder configured",
+                "No cache folder is configured. Choose a folder to enable local caching and offline access to measurements.\n\nChoose a cache folder now?")
+            if answer == QMessageBox.StandardButton.Yes:
+                self.choose_cache_folder()
+
     def check_packaged_release(self, manual=False):
-        version = QApplication.applicationVersion()
-        channel = os.environ.get("BLUELCMS_RELEASE_CHANNEL", "stable")
-        if not manual and settings.settings().value("packaged_release_prompt", "", type=str) == version:
-            return
-        self.submit(0, releases.release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual, channel), channel)
+        self.submit(0, releases.release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual), "stable")
 
     def packaged_release_ready(self, token, result, error, manual=False, channel="stable"):
         version = QApplication.applicationVersion()
-        if not manual:
-            settings.settings().setValue("packaged_release_prompt", version)
         if error:
             if manual:
                 QMessageBox.warning(self, "Release check failed", error)
@@ -511,11 +552,11 @@ class MainWindow(QMainWindow):
             if manual:
                 QMessageBox.warning(self, "Release check failed", f"No {channel} release is currently available from GitHub.")
             return
-        if result["tag"] == f"v{version}":
+        if not releases.newer_stable_version(result["tag"], version):
             if manual:
                 QMessageBox.information(self, "BlueLCMS is current", "This packaged version is the latest GitHub release.")
             return
-        answer = QMessageBox.question(self, "BlueLCMS update available", f"GitHub release {result['tag']} is available. Select a version to install?")
+        answer = QMessageBox.question(self, "BlueLCMS update available", f"A newer stable version, {result['tag']}, is available.\nCurrent version: {version}\n\nSelect a version to install?")
         if answer == QMessageBox.StandardButton.Yes:
             self.select_release()
 
@@ -564,10 +605,22 @@ class MainWindow(QMainWindow):
                     self.refresh_cache_indicators()
                 return
 
-    def refresh_files(self):
+    def set_auto_refresh_sources(self, enabled):
+        settings.set_auto_refresh_sources(enabled)
+        if enabled:
+            self.source_refresh_timer.start()
+        else:
+            self.source_refresh_timer.stop()
+
+    def refresh_files(self, background=False):
+        if background and self.pending_discoveries:
+            return
+        self.background_discovery = background
         if not self.folders and self.folder:
             self.folders = [self.folder]
-        self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide(); self.folder_token += 1
+        if not background:
+            self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide()
+        self.folder_token += 1
         if not self.folders and settings.cache_folder() is None:
             self.folder_label.setText("Add mzML locations in Settings")
             self.statusBar().showMessage("No mzML locations configured.")
@@ -575,7 +628,8 @@ class MainWindow(QMainWindow):
         self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
         self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
         self.pending_discoveries = len(self.folders) * 2 + 1
-        self.set_loading(True)
+        if not background:
+            self.set_loading(True)
         self.submit(self.folder_token, discover_cached_measurements, self.caches_listed, settings.cache_folder())
         if len(self.folders) >= 2:
             agilent_folder, advion_folder = self.folders[0], self.folders[1]
@@ -596,7 +650,8 @@ class MainWindow(QMainWindow):
             self.pending_discoveries -= 1
         if self.pending_discoveries:
             return
-        self.set_loading(False)
+        if not self.background_discovery:
+            self.set_loading(False)
         # Reconcile old caches regardless of which discovery worker finished first.
         for source in self.discovered_paths:
             for expected in (cached_path(source, settings.cache_folder()), legacy_cached_path(source, settings.cache_folder())):
@@ -609,15 +664,38 @@ class MainWindow(QMainWindow):
                 self.discovered_measurements.setdefault(source.key, source)
             else:
                 paths.add(source)
+        existing = {self.files.item(index).data(Qt.ItemDataRole.UserRole): self.files.item(index) for index in range(self.files.count())}
+        if self.background_discovery:
+            available = paths | set(self.discovered_measurements.values())
+            # A transient discovery error must not erase the current sidebar.
+            if self.discovery_errors:
+                available.update(existing)
+            removed_selection = False
+            previous_block = self.files.blockSignals(True)
+            try:
+                for source, item in existing.items():
+                    if source not in available:
+                        removed_selection |= item.isSelected()
+                        self.files.takeItem(self.files.row(item))
+            finally:
+                self.files.blockSignals(previous_block)
+            if removed_selection:
+                self.select_files()
         for path in sorted(paths, key=lambda value: value.name.casefold()):
+            if path in existing:
+                continue
             item = QListWidgetItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         for measurement in sorted(self.discovered_measurements.values(), key=lambda value: value.key, reverse=True):
+            if measurement in existing:
+                continue
             item = QListWidgetItem(vendor_display_name(measurement, settings.show_date_prefix()))
             item.setData(Qt.ItemDataRole.UserRole, measurement)
             item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
             item.setToolTip(measurement_tooltip(measurement))
             self.files.addItem(item)
         self.refresh_cache_indicators()
+        if self.background_discovery:
+            return
         pairs = len(self.discovered_measurements)
         found = self.files.count() - pairs
         if self.discovery_errors:
@@ -653,27 +731,92 @@ class MainWindow(QMainWindow):
 
     def select_files(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
-        self.load_token += 1; token = self.load_token; self.runs = {p: r for p, r in self.runs.items() if p in paths}; self.stream_uv = {p: [] for p in paths if p not in self.runs}; self.stream_tic = {p: [] for p in paths if p not in self.runs}; self.histograms.clear()
+        if len(paths) == 1 and self.active_load is not None and self.active_load not in paths:
+            previous = self.active_load
+            job = self.load_jobs.get(previous)
+            if job is not None:
+                job.pause()
+                self.paused_loads[previous] = (job, self.load_token)
+                # Paused jobs retain their parser state on their worker thread.
+                self.pool.setMaxThreadCount(3 + len(self.paused_loads))
+            self.active_load = None
+        self.runs = {p: r for p, r in self.runs.items() if p in paths}
+        self.failed_loads.intersection_update(paths)
+        self.stream_uv = {p: self.stream_uv.get(p, []) for p in paths if p not in self.runs}
+        self.stream_tic = {p: self.stream_tic.get(p, []) for p in paths if p not in self.runs}
+        self.histograms.clear(); self.region_token += 1
         self.uv.integration_enabled = len(paths) == 1 and paths[0] in self.runs
         self.refresh_integrations()
-        missing = [p for p in paths if p not in self.runs]
-        if missing: self.set_loading(True)
-        for path in missing:
-            cache = self.cache_for(path)
-            if isinstance(path, VendorMeasurement) and not (cache and cache.is_file()):
-                self.submit_vendor_load(token, path)
-                continue
-            cache = self.cache_for(path)
-            legacy = None if isinstance(path, VendorMeasurement) else self.legacy_cache_for(path)
-            source = cache if cache and cache.is_file() else legacy if legacy and legacy.is_file() else path
-            source_label = self.load_source_label(path, source)
-            self.set_download_state(path, source == path and is_afp_path(path))
-            size = source.stat().st_size / (1024 * 1024) if source.exists() else 0
-            name = path.label if isinstance(path, VendorMeasurement) else path.name
-            self.statusBar().showMessage(f"Loading {source_label}: {name} ({size:.1f} MiB)…")
-            self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {source_label}…"); self.progress.show()
-            self.submit_load(token, path, source, source_label, lambda t, r, e, p=path: self.loaded(t, p, r, e))
+        missing = [p for p in paths if p not in self.runs and p not in self.failed_loads and p != self.active_load]
+        self.load_queue = [p for p in self.load_queue if p in missing]
+        self.load_queue.extend(p for p in missing if p not in self.load_queue)
+        if self.active_load is not None:
+            self.progress.setFormat(f"Loading {self.queue_marker()} %p%")
+        self.start_next_load(update_display=False)
         self.draw_uv(); self.timer.start()
+
+    def queue_marker(self):
+        if self.active_load is None:
+            return ""
+        selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        if self.active_load not in selected:
+            return "[background]"
+        completed = len((set(self.runs) | self.failed_loads) & (selected - {self.active_load}))
+        return f"[{completed + 1}/{max(1, len(selected))}]"
+
+    def start_next_load(self, update_display=True):
+        if self.active_load is not None:
+            return
+        if not self.load_queue:
+            self.progress.hide(); self.set_loading(False)
+            self.uv.integration_enabled = len(self.runs) == 1 and len(self.files.selectedItems()) == 1
+            if update_display:
+                self.refresh_integrations(); self.draw_uv(); self.timer.start()
+            if self.paused_loads:
+                path = next(iter(self.paused_loads))
+                self.resume_load(path)
+            return
+        path = self.load_queue.pop(0)
+        if path in self.paused_loads:
+            self.resume_load(path)
+            return
+        self.active_load = path
+        self.load_sequence += 1; self.load_token = self.load_sequence; token = self.load_token
+        self.set_loading(True)
+        self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()}…"); self.progress.show()
+        cache = self.cache_for(path)
+        if isinstance(path, VendorMeasurement) and not (cache and cache.is_file()):
+            self.submit_vendor_load(token, path)
+            return
+        legacy = None if isinstance(path, VendorMeasurement) else self.legacy_cache_for(path)
+        source = cache if cache and cache.is_file() else legacy if legacy and legacy.is_file() else path
+        source_label = self.load_source_label(path, source)
+        self.set_download_state(path, source == path and is_afp_path(path))
+        name = path.label if isinstance(path, VendorMeasurement) else path.name
+        self.statusBar().showMessage(f"Loading {self.queue_marker()} {source_label}: {name}…")
+        self.submit_load(token, path, source, source_label, lambda t, r, e, p=path: self.loaded(t, p, r, e))
+
+    def resume_load(self, path):
+        job, token = self.paused_loads.pop(path)
+        self.active_load = path
+        self.load_token = token
+        self.pool.setMaxThreadCount(3 + len(self.paused_loads))
+        if path in self.deferred_results:
+            run, error = self.deferred_results.pop(path)
+            self.loaded(token, path, run, error)
+        else:
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()}…"); self.progress.show()
+            selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+            self.set_loading(path in selected)
+            job.resume()
+
+    def finish_load(self, path):
+        self.set_download_state(path, False)
+        self.stream_uv.pop(path, None); self.stream_tic.pop(path, None)
+        if path == self.active_load:
+            self.active_load = None
+        selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        self.start_next_load(update_display=path in selected)
 
     def snap_wavelength(self, run):
         """Select a wavelength the run actually contains.
@@ -686,43 +829,47 @@ class MainWindow(QMainWindow):
             self.wavelength.setValue(int(round(float(available.min()))))
 
     def submit_vendor_load(self, token, measurement):
-        """Load a matched Agilent+Advion pair; these are never written to the mzML cache."""
+        """Load a matched Agilent+Advion pair through the measurement queue."""
         job = VendorLoadJob(token, measurement)
+        self.load_jobs[measurement] = job
         self.jobs.add(job)
         job.signals.progress.connect(lambda t, done, total: self.load_progress(t, measurement, "Agilent+Advion measurement", done, total))
         job.signals.done.connect(lambda t, r, e, m=measurement: self.loaded(t, m, r, e))
         job.signals.done.connect(lambda *_: self.jobs.discard(job))
         self.set_loading(True)
-        self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {measurement.label}…"); self.progress.show()
+        self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()} {measurement.label}…"); self.progress.show()
         self.pool.start(job)
 
     def loaded(self, token, path, run, error):
+        if path in self.paused_loads and token == self.paused_loads[path][1]:
+            self.deferred_results[path] = (run, error)
+            return
         if token != self.load_token: return
+        self.load_jobs.pop(path, None)
         if error:
-            self.set_download_state(path, False)
-            self.progress.hide()
-            self.set_loading(False)
+            self.failed_loads.add(path)
             name = path.name if isinstance(path, Path) else path.label
+            self.finish_load(path)
             self.statusBar().showMessage(f"Unable to load {name}: {error}")
             return
-        self.runs[path] = run
+        selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        if path in selected:
+            self.runs[path] = run
+            self.run_data = run
         self.stream_uv.pop(path, None)
         self.stream_tic.pop(path, None)
-        self.run_data = run
-        if isinstance(path, VendorMeasurement):
+        if path in selected and isinstance(path, VendorMeasurement):
             self.snap_wavelength(run)
+        if path in selected:
+            if selected <= (set(self.runs) | self.failed_loads):
+                self.set_loading(False)
+            self.draw_uv()
         cache = self.cache_for(path)
         if cache and not cache.is_file():
             name = path.label if isinstance(path, VendorMeasurement) else path.name
-            self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {name}…"); self.progress.show()
+            self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {self.queue_marker()} {name}…"); self.progress.show()
             self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
-        else:
-            self.set_download_state(path, False)
-            self.progress.hide()
-        if len(self.runs) == len(self.files.selectedItems()):
-            self.uv.integration_enabled = len(self.runs) == 1
-            self.refresh_integrations()
-            self.set_loading(False); self.draw_uv(); self.timer.start()
+        self.finish_load(path)
 
     def selected_integration_source(self):
         paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
@@ -809,21 +956,23 @@ class MainWindow(QMainWindow):
     def load_progress(self, token, path, source_label, copied, total):
         if token != self.load_token:
             return
-        self.show_progress(f"Loading {source_label}", path, copied, total)
+        marker = f"{self.queue_marker()} " if self.active_load is not None else ""
+        self.show_progress(f"Loading {marker}{source_label}", path, copied, total)
 
     def cached(self, token, path, cache, error):
         if token != self.load_token:
+            if not error:
+                self.cached_measurements[path] = cache
+                self.refresh_cache_indicators()
             return
         name = path.label if isinstance(path, VendorMeasurement) else path.name
         if error:
-            self.set_download_state(path, False)
-            self.progress.hide()
             self.statusBar().showMessage(f"Loaded {name}, but local caching failed: {error}")
             return
         self.cached_measurements[path] = cache
         self.refresh_cache_indicators()
-        self.progress.hide()
-        self.statusBar().showMessage(f"Cached {name} locally")
+        if self.active_load is None:
+            self.statusBar().showMessage(f"Cached {name} locally")
 
     def show_progress(self, action, path, copied, total):
         if total:
@@ -902,6 +1051,9 @@ class MainWindow(QMainWindow):
             loading_overlay(self.uv, True)
 
     def calculate_region(self):
+        selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        if self.active_load is not None and self.active_load in selected:
+            return
         if not self.runs or not self.uv.region.isVisible(): return
         self.region_token += 1; self.set_loading(True); start, end = self.uv.region.getRegion(); pending = len(self.runs); collected = {}
         def done(token, result, error, path):
@@ -967,8 +1119,12 @@ class MainWindow(QMainWindow):
                 if all(abs(x - previous) > (high - low) / 12 for previous in used):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
-    def closeEvent(self, event): self.stream_timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
+    def closeEvent(self, event):
+        self.source_refresh_timer.stop(); self.stream_timer.stop()
+        for job in self.load_jobs.values():
+            job.resume()
+        self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.1"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); return app.exec()
+    app = QApplication(sys.argv); app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.2.dev1"); app.setWindowIcon(application_icon()); window = MainWindow(); window.show(); QTimer.singleShot(0, window.startup_checks); return app.exec()

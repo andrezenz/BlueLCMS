@@ -23,3 +23,12 @@ def test_latest_release_handles_network_failure(monkeypatch):
         assert "offline" in str(error)
     else:
         raise AssertionError("network failures must be reported")
+
+
+def test_only_newer_stable_versions_trigger_alerts():
+    assert releases.newer_stable_version("v1.0.10", "1.0.2")
+    assert not releases.newer_stable_version("v1.0.1", "1.0.1")
+    assert not releases.newer_stable_version("v1.0.0", "1.0.1")
+    assert releases.newer_stable_version("v1.1.0", "1.1.0-dev.1")
+    assert releases.newer_stable_version("v1.0.2", "1.0.2.dev1")
+    assert not releases.newer_stable_version("dev-latest", "1.0.1")

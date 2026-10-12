@@ -1,6 +1,7 @@
 """Read public BlueLCMS releases without requiring a local Git checkout."""
 
 import json
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -11,6 +12,17 @@ DEVELOPMENT_RELEASE_URL = "https://api.github.com/repos/andrezenz/BlueLCMS/relea
 
 class ReleaseError(RuntimeError):
     pass
+
+
+def newer_stable_version(tag: str, current: str) -> bool:
+    """Compare numeric release versions rather than treating any difference as new."""
+    def version(value):
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)([-+].*|\.dev\d+)?", value)
+        if not match:
+            return None
+        return tuple(int(match[index]) for index in (1, 2, 3)) + (not bool(match[4] and not match[4].startswith("+")),)
+    latest, installed = version(tag), version(current)
+    return latest is not None and installed is not None and latest > installed
 
 
 def release(channel="stable", tag=None) -> dict[str, object] | None:

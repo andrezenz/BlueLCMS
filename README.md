@@ -13,6 +13,10 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
 
 ## Updates
 
+At every launch, BlueLCMS checks for a newer stable GitHub release and offers
+the version selector when one is available. It also prompts to choose a cache
+folder if none is configured.
+
 Use **Update → Update version…** to select a published
 GitHub release, including prereleases. It downloads the selected source version
 and installs project dependencies before offering a restart. Updates refuse
@@ -79,6 +83,16 @@ updates the existing shortcut. To remove the shortcut, delete
 `bluelcms.desktop` from the applications directory above.
 
 ### Viewing data
+
+**Settings → Automatically refresh sources every minute** enables background
+rescans of configured locations. It is enabled by default, remembers your
+preference, and preserves the current selection and plots during a rescan.
+
+Ctrl+click adds measurements to a loading queue; progress shows **[1/n]**,
+**[2/n]**, and so on. A single click on another measurement prioritizes it,
+pausing the previous parser with its partial data retained in memory. Once
+the newly selected measurement is ready, paused loads resume in the background
+and are cached without being added to the selected plots.
 
 1. Use **Settings → Manage mzML locations…** to add one or more folders. The
    locations are remembered between sessions and their files appear together in
