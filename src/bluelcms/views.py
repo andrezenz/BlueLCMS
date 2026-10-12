@@ -115,10 +115,16 @@ class MassPlot(pg.PlotWidget):
 
 
 class MassViewBox(ResetViewBox):
-    """Wheel scales intensity only; left drag selects an m/z interval."""
+    """Wheel scales intensity in the plot or m/z over the x-axis."""
 
     def wheelEvent(self, event, axis=None):
         event.accept()
+        if axis == 0:
+            low, high = self.viewRange()[0]
+            anchor = self.mapSceneToView(event.scenePos()).x()
+            factor = .9 ** (event.delta() / 120)
+            self.setXRange(anchor + (low - anchor) * factor, anchor + (high - anchor) * factor, padding=0)
+            return
         upper = max(0, self.viewRange()[1][1])
         lower, upper = positive_zoom_range(upper, event.delta() > 0)
         self.setYRange(lower, upper, padding=0)

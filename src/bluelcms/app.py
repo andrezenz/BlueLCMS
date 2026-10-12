@@ -24,6 +24,7 @@ from . import releases
 from . import package_updater
 from .sidebar import MeasurementItem, MeasurementTree
 from .external import OpenRequestServer, forward_request, parse_request
+from .version import application_version
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
@@ -1237,7 +1238,7 @@ class MainWindow(QMainWindow):
 def main():
     request = parse_request(sys.argv[1:])
     app = QApplication(sys.argv[:1])
-    app.setApplicationName("BlueLCMS"); app.setApplicationVersion("1.0.2.dev1"); app.setWindowIcon(application_icon())
+    app.setApplicationName("BlueLCMS"); app.setApplicationVersion(application_version()); app.setWindowIcon(application_icon())
     if request:
         try:
             if forward_request(request):

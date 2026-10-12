@@ -42,3 +42,26 @@ def test_update_rejects_unknown_target(monkeypatch, tmp_path):
     monkeypatch.setattr(updater, "releases", lambda root: [])
     with pytest.raises(updater.UpdateError, match="Unknown"):
         updater.update(tmp_path, "main")
+
+
+@pytest.mark.parametrize("tag", ["v1.0.2-dev.7", "dev-latest"])
+def test_release_update_retains_numbered_tags_but_not_moving_alias(monkeypatch, tmp_path, tag):
+    target = f"refs/tags/{tag}"
+    monkeypatch.setattr(updater, "available_versions", lambda root: {tag: target})
+    calls = []
+    def git(root, *args):
+        calls.append(args)
+        if args[:3] == ("remote", "get-url", "origin"):
+            return "https://github.com/andrezenz/BlueLCMS.git"
+        if args[:2] == ("rev-parse", "--short"):
+            return "abc123"
+        return ""
+    monkeypatch.setattr(updater, "_run", git)
+    class Result:
+        returncode = 0
+        stderr = ""
+    monkeypatch.setattr(updater.subprocess, "run", lambda *args, **kwargs: Result())
+    updater.update(tmp_path, target)
+    refspec = target if tag == "dev-latest" else f"{target}:{target}"
+    assert ("fetch", "origin", refspec) in calls
+    assert ("switch", "--detach", "FETCH_HEAD") in calls

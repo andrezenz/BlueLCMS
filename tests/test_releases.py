@@ -31,4 +31,5 @@ def test_only_newer_stable_versions_trigger_alerts():
     assert not releases.newer_stable_version("v1.0.0", "1.0.1")
     assert releases.newer_stable_version("v1.1.0", "1.1.0-dev.1")
     assert releases.newer_stable_version("v1.0.2", "1.0.2.dev1")
+    assert releases.newer_stable_version("v1.0.2", "1.0.2.dev2+gabc123")
     assert not releases.newer_stable_version("dev-latest", "1.0.1")

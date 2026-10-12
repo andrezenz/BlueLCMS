@@ -33,9 +33,14 @@ restart when installation finishes.
 
 Users download the small bootstrap installer from the project website, not from
 the repository. It prompts for `stable` or `development`, then downloads the
-matching full application package from GitHub Releases. Pushing a `v*` tag
-builds the stable packages; every `dev` push rebuilds the moving `dev-latest`
-prerelease. Both releases contain a Linux x86_64 archive, a macOS disk image,
+matching full application package from GitHub Releases. Pushing a stable tag
+such as `v1.0.2` builds the stable packages. Every `dev` push automatically
+allocates an immutable numbered prerelease such as `v1.0.2-dev.2`, then updates
+the moving `dev-latest` download when that commit is still the current dev head.
+Numbered development releases remain available in the version selector and do
+not change the latest stable release. Manually pushed `-dev.N` tags are also
+classified as prereleases. Re-running a build reuses its commit's numbered tag.
+Both release types contain a Linux x86_64 archive, a macOS disk image,
 and a Windows installer, built on their native GitHub-hosted runners.
 
 Run the manually triggered **Build website installer** workflow when a new
@@ -47,6 +52,11 @@ newer version is available.
 
 On Linux, extract the release archive and run `sh install.sh` from the extracted
 directory to install the application and desktop entry under `~/.local`.
+
+Packaged applications display their exact build version in **About**. Source
+checkouts use their numbered tag when present, or show the declared development
+version with a commit suffix when not yet tagged. Tags are allocated by GitHub
+Actions after a push; a local commit alone does not create one.
 
 ## Install and run
 
@@ -83,6 +93,10 @@ updates the existing shortcut. To remove the shortcut, delete
 `bluelcms.desktop` from the applications directory above.
 
 ### Viewing data
+
+In mass spectra, scroll over the bottom **m/z** axis to zoom horizontally around
+the cursor. Scrolling inside the plotting area zooms intensity while keeping
+zero fixed. Positive and negative spectra share the same m/z range.
 
 **Settings → Automatically refresh sources every minute** enables background
 rescans of configured locations. It is enabled by default, remembers your

@@ -17,7 +17,7 @@ class ReleaseError(RuntimeError):
 def newer_stable_version(tag: str, current: str) -> bool:
     """Compare numeric release versions rather than treating any difference as new."""
     def version(value):
-        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)([-+].*|\.dev\d+)?", value)
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)([-+].*|\.dev\d+(?:\+.*)?)?", value)
         if not match:
             return None
         return tuple(int(match[index]) for index in (1, 2, 3)) + (not bool(match[4] and not match[4].startswith("+")),)

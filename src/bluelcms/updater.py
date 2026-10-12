@@ -70,7 +70,10 @@ def update(root: Path, target: str) -> dict:
         if target not in available_versions(root).values():
             raise UpdateError(f"Unknown update target: {target}")
         validate_checkout(root)
-        _run(root, "fetch", "origin", target)
+        # Keep immutable numbered tags locally for version reporting. The moving
+        # dev-latest alias is fetched into FETCH_HEAD without overwriting a tag.
+        refspec = target if target == "refs/tags/dev-latest" else f"{target}:{target}"
+        _run(root, "fetch", "origin", refspec)
         _run(root, "switch", "--detach", "FETCH_HEAD")
         python = root / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
         result = subprocess.run([str(python), "-m", "pip", "install", "--editable", str(root)], cwd=root, text=True, capture_output=True)

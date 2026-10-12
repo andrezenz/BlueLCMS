@@ -580,6 +580,38 @@ def test_histogram_intensity_zoom_keeps_zero_fixed():
     assert positive_zoom_range(90, False) == (0, 100)
 
 
+def test_mass_x_axis_wheel_zoom_anchors_cursor_and_leaves_intensity_unchanged():
+    from PySide6.QtWidgets import QGraphicsSceneWheelEvent
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.setXRange(100, 200, padding=0)
+        plot.setYRange(0, 100, padding=0)
+        application.processEvents()
+        axis = plot.getAxis("bottom")
+        scene_x = plot.view.mapViewToScene(QPointF(125, 50)).x()
+        scene_y = plot.view.sceneBoundingRect().bottom() + 10
+        wheel = QGraphicsSceneWheelEvent()
+        wheel.setScenePos(QPointF(scene_x, scene_y))
+        wheel.setDelta(120)
+        axis.wheelEvent(wheel)
+        np.testing.assert_allclose(plot.view.viewRange()[0], [102.5, 192.5])
+        np.testing.assert_allclose(plot.view.viewRange()[1], [0, 100])
+        wheel.setDelta(-120)
+        axis.wheelEvent(wheel)
+        np.testing.assert_allclose(plot.view.viewRange()[0], [100, 200])
+        wheel.setScenePos(plot.view.mapViewToScene(QPointF(125, 50)))
+        plot.view.wheelEvent(wheel)
+        np.testing.assert_allclose(plot.view.viewRange()[0], [100, 200])
+        np.testing.assert_allclose(plot.view.viewRange()[1], [0, 100 / .9])
+    finally:
+        plot.close()
+
+
 def test_cached_item_is_marked(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
@@ -642,8 +674,10 @@ def test_byte_progress_and_loading_overlay_are_visible():
         window.close()
 
 
-def test_streamed_uv_points_draw_before_run_completion(tmp_path):
+def test_streamed_uv_points_draw_before_run_completion(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
     window = MainWindow()
     window.show()
     try:
