@@ -109,6 +109,12 @@ its m/z coordinate to four decimal places.
 **Settings → Automatically refresh sources every minute** enables background
 rescans of configured locations. It is enabled by default, remembers your
 preference, and preserves the current selection and plots during a rescan.
+**Settings → Alert when new measurements are found** is also enabled by default
+and remembers your preference. New mzML files found during a background rescan
+are announced in the status bar; BlueLCMS restores its window if minimized,
+requests focus, and signals taskbar attention. Initial scans and returning
+previously known files do not trigger alerts. Focus activation depends on the
+desktop's focus policy.
 
 Ctrl+click adds measurements to a loading queue; progress shows **[1/n]**,
 **[2/n]**, and so on. A single click on another measurement prioritizes it,

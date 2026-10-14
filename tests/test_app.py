@@ -127,6 +127,105 @@ def test_background_refresh_preserves_selection_and_toggle(tmp_path, monkeypatch
         reopened.close()
 
 
+def test_new_file_alerts_once_and_preference_persists(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    folder = tmp_path / "remote"
+    folder.mkdir()
+    source = write_mzml(folder / "original.mzML")
+    settings.set_data_folders([folder])
+    alerts = []
+    monkeypatch.setattr(MainWindow, "notify_new_measurements", lambda self, paths: alerts.append(set(paths)))
+    window = MainWindow()
+    def rescan():
+        window.refresh_files(background=True)
+        window.pool.waitForDone(); application.processEvents()
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        assert window.alert_new_measurements.isChecked()
+        assert not alerts, "initial discovery establishes the baseline"
+        window.files.setCurrentRow(0)
+        window.pool.waitForDone(); application.processEvents()
+        original_run = window.run_data
+        nested = folder / "batch"
+        nested.mkdir()
+        added = write_mzml(nested / "new.mzML")
+        rescan()
+        assert alerts == [{added}]
+        assert window.run_data is original_run
+        assert window.files.selectedItems()[0].data(Qt.ItemDataRole.UserRole) == source
+        rescan()
+        assert alerts == [{added}], "unchanged files must not alert again"
+        added.unlink()
+        rescan()
+        write_mzml(added)
+        rescan()
+        assert alerts == [{added}], "a returning known file must not alert again"
+        window.alert_new_measurements.setChecked(False)
+        write_mzml(folder / "silent.mzML")
+        rescan()
+        assert alerts == [{added}]
+        assert not settings.alert_new_measurements()
+        window.alert_new_measurements.setChecked(True)
+        rescan()
+        assert alerts == [{added}], "re-enabling alerts must not announce old arrivals"
+        window.alert_new_measurements.setChecked(False)
+    finally:
+        window.close()
+    reopened = MainWindow()
+    try:
+        assert not reopened.alert_new_measurements.isChecked()
+    finally:
+        reopened.close()
+
+
+def test_new_measurement_notification_restores_and_requests_focus(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    called = []
+    monkeypatch.setattr(window, "isMinimized", lambda: True)
+    monkeypatch.setattr(window, "showNormal", lambda: called.append("restore"))
+    monkeypatch.setattr(window, "raise_", lambda: called.append("raise"))
+    monkeypatch.setattr(window, "activateWindow", lambda: called.append("activate"))
+    monkeypatch.setattr(QApplication, "alert", lambda widget, duration: called.append((widget, duration)))
+    try:
+        window.notify_new_measurements({tmp_path / "new.mzML"})
+        assert called == ["restore", "raise", "activate", (window, 5000)]
+        assert "new.mzML" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+
+
+def test_remote_reconnect_announces_only_genuinely_new_files(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    write_mzml(remote / "original.mzML")
+    settings.set_data_folders([remote])
+    alerts = []
+    monkeypatch.setattr(MainWindow, "notify_new_measurements", lambda self, paths: alerts.append(set(paths)))
+    window = MainWindow()
+    try:
+        window.pool.waitForDone(); application.processEvents()
+        disconnected = tmp_path / "disconnected"
+        remote.rename(disconnected)
+        window.refresh_files(background=True)
+        window.pool.waitForDone(); application.processEvents()
+        assert not alerts
+        disconnected.rename(remote)
+        added = write_mzml(remote / "added-while-disconnected.mzML")
+        window.refresh_files(background=True)
+        window.pool.waitForDone(); application.processEvents()
+        assert alerts == [{added}]
+    finally:
+        window.close()
+
+
 def test_sidebar_groups_nested_measurements_and_preserves_collapsed_folders(tmp_path, monkeypatch):
     application = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)

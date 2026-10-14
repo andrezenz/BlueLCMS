@@ -3,6 +3,14 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev5
+
+- Added a persistent, default-on **Alert when new measurements are found** setting.
+- Background rescans announce new mzML files, request window focus, and signal
+  taskbar attention without changing the current measurement or plots.
+- Initial scans, repeated scans, cached originals, and returning files after a
+  remote-share reconnect do not cause duplicate notifications.
+
 ## 1.0.2.dev4
 
 - Added **About → Changelog…**, available offline in source and packaged apps.

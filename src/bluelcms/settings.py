@@ -80,6 +80,14 @@ def set_auto_refresh_sources(enabled: bool) -> None:
     settings().setValue("auto_refresh_sources", enabled)
 
 
+def alert_new_measurements() -> bool:
+    return settings().value("alert_new_measurements", True, type=bool)
+
+
+def set_alert_new_measurements(enabled: bool) -> None:
+    settings().setValue("alert_new_measurements", enabled)
+
+
 def integration_folder() -> Path:
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return data_home / "BlueLCMS" / "integrations"

@@ -300,6 +300,8 @@ class MainWindow(QMainWindow):
         self.external_requests = []
         self.pending_view_request = None
         self.last_uv_bounds = None
+        self.source_history = {}
+        self.new_measurements = set()
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
@@ -339,6 +341,11 @@ class MainWindow(QMainWindow):
         menu.addAction(self.auto_refresh_sources)
         if self.auto_refresh_sources.isChecked():
             self.source_refresh_timer.start()
+        self.alert_new_measurements = QAction("Alert when new measurements are found", self)
+        self.alert_new_measurements.setCheckable(True)
+        self.alert_new_measurements.setChecked(settings.alert_new_measurements())
+        self.alert_new_measurements.toggled.connect(settings.set_alert_new_measurements)
+        menu.addAction(self.alert_new_measurements)
         update_menu = self.menuBar().addMenu("Update")
         update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
@@ -649,6 +656,8 @@ class MainWindow(QMainWindow):
             return
         self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
         self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
+        self.new_measurements = set()
+        self.source_history = {folder: history for folder, history in self.source_history.items() if folder in self.folders}
         self.pending_discoveries = len(self.folders) * 2 + 1
         if not background:
             self.set_loading(True)
@@ -658,7 +667,8 @@ class MainWindow(QMainWindow):
         else:
             agilent_folder, advion_folder = self.folders[0] if self.folders else None, None
         for folder in self.folders:
-            self.submit(self.folder_token, discover_files, self.files_listed, folder)
+            self.submit(self.folder_token, discover_files,
+                lambda token, paths, error, root=folder: self.files_listed(token, paths, error, root), folder)
             self.submit(
                 self.folder_token,
                 discover_vendor_measurements,
@@ -722,6 +732,11 @@ class MainWindow(QMainWindow):
             for request in requests:
                 self.open_external(request)
         if self.background_discovery:
+            # Cached originals are already known even when first seen remotely
+            # after a disconnected share becomes available again.
+            new_files = self.new_measurements - set(self.cached_measurements)
+            if new_files and settings.alert_new_measurements():
+                self.notify_new_measurements(new_files)
             return
         pairs = len(self.discovered_measurements)
         found = self.files.count() - pairs
@@ -730,10 +745,34 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements across {len(self.folders)} location(s). Select one or more." if self.files.count() else "No mzML files or matched measurements found in configured locations.")
 
-    def files_listed(self, token, paths, error):
+    def notify_new_measurements(self, paths):
+        expansion = self.files.folder_expansion()
+        names = sorted(path.name for path in paths)
+        message = f"New measurement found: {names[0]}" if len(names) == 1 else f"{len(names)} new measurements found: " + ", ".join(names[:3]) + ("…" if len(names) > 3 else "")
+        self.statusBar().showMessage(message)
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self, 5000)
+        # Restoring focus can make Qt reveal the current leaf automatically.
+        self.files.restore_folder_expansion(expansion)
+        QTimer.singleShot(0, lambda: self.files.restore_folder_expansion(expansion))
+
+    def files_listed(self, token, paths, error, folder=None):
         if token != self.folder_token: return
         if error: self.discovery_errors.append(error)
-        elif paths: self.discovered_paths.extend(paths)
+        else:
+            if folder is not None:
+                found = set(paths or [])
+                if folder in self.source_history:
+                    self.new_measurements.update(found - self.source_history[folder])
+                    self.source_history[folder].update(found)
+                else:
+                    self.source_history[folder] = found
+            if paths: self.discovered_paths.extend(paths)
         self.discovery_finished()
 
     def caches_listed(self, token, entries, error):

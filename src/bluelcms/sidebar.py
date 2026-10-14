@@ -48,6 +48,14 @@ class MeasurementTree(QTreeWidget):
     def set_roots(self, roots):
         self.roots = tuple(sorted(set(roots), key=lambda path: len(path.parts), reverse=True))
 
+    def folder_expansion(self):
+        return {path: item.isExpanded() for path, item in self._folders.items()}
+
+    def restore_folder_expansion(self, states):
+        for path, expanded in states.items():
+            if path in self._folders:
+                self._folders[path].setExpanded(expanded)
+
     def clear(self):
         self._folders.clear()
         self._items.clear()
