@@ -119,6 +119,14 @@ class MassPlot(pg.PlotWidget):
         self.addItem(self.cursor_line, ignoreBounds=True)
         self.scene().sigMouseMoved.connect(self.move_cursor)
         self.view.mass_clicked.connect(self.set_mass_reference)
+        self.zoom_region = pg.LinearRegionItem(
+            movable=False, brush=(72, 169, 239, 55),
+            pen=pg.mkPen("#48a9ef", width=1))
+        self.zoom_region.setZValue(10)
+        self.zoom_region.hide()
+        self.addItem(self.zoom_region, ignoreBounds=True)
+        self.view.zoom_dragged.connect(self.preview_mass_zoom)
+        self.view.zoom_finished.connect(self.zoom_region.hide)
         # PlotWidget installs clear as an instance alias to PlotItem.clear.
         self.clear = self.clear_spectra
 
@@ -135,6 +143,10 @@ class MassPlot(pg.PlotWidget):
         self.snap_range = radius
         if self.cursor_line.isVisible() and self.cursor_position is not None:
             self.move_cursor(self.cursor_position)
+
+    def preview_mass_zoom(self, start, end):
+        self.zoom_region.setRegion((min(start, end), max(start, end)))
+        self.zoom_region.show()
 
     def snapped_mass(self, mass):
         if not self.snap_enabled:
@@ -187,6 +199,7 @@ class MassPlot(pg.PlotWidget):
         # Histogram redraws clear data items; keep the hover overlay attached.
         if hasattr(self, "cursor_line"):
             self.addItem(self.cursor_line, ignoreBounds=True)
+            self.addItem(self.zoom_region, ignoreBounds=True)
             for line in self.reference_lines:
                 self.addItem(line, ignoreBounds=True)
 
@@ -205,6 +218,8 @@ class MassPlot(pg.PlotWidget):
 class MassViewBox(ResetViewBox):
     """Wheel scales intensity in the plot or m/z over the x-axis."""
     mass_clicked = Signal(float)
+    zoom_dragged = Signal(float, float)
+    zoom_finished = Signal()
 
     def mouseClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -230,11 +245,14 @@ class MassViewBox(ResetViewBox):
             super().mouseDragEvent(event, axis)
             return
         event.accept()
+        start = self.mapToView(event.buttonDownPos()).x()
+        end = self.mapToView(event.pos()).x()
         if event.isFinish():
-            start = self.mapToView(event.buttonDownPos()).x()
-            end = self.mapToView(event.pos()).x()
+            self.zoom_finished.emit()
             if abs(end - start) > 1e-9:
                 self.setXRange(min(start, end), max(start, end), padding=0)
+        else:
+            self.zoom_dragged.emit(start, end)
 
 
 def loading_overlay(plot, visible):

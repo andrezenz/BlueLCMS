@@ -10,11 +10,11 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QDoubleValidator, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
     QLabel, QListWidget, QMainWindow, QMessageBox, QSplitter,
     QDialog, QDialogButtonBox, QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
-    QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QInputDialog)
+    QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path, remote_mount_roots
@@ -26,7 +26,8 @@ from .sidebar import MeasurementItem, MeasurementTree
 from .external import OpenRequestServer, forward_request, parse_request
 from .version import application_version
 from .help import DocumentDialog
-from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
+from .notifications import DesktopNotifications
+from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, extracted_tic, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
 
@@ -65,6 +66,7 @@ def measurement_tooltip(measurement) -> str:
 from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
+XIC_COLORS = ("#d49cf0", "#ffd25a", "#5fd8df", "#f3a672", "#8ce0c5")
 
 
 def cache_metadata(source):
@@ -302,6 +304,14 @@ class MainWindow(QMainWindow):
         self.last_uv_bounds = None
         self.source_history = {}
         self.new_measurements = set()
+        self.desktop_notifications = None
+        self.xic_entries = {}
+        self.xic_buttons = {}
+        self.xic_widget_actions = {}
+        self.xic_colors = {}
+        self.xic_color_index = 0
+        self.xic_results = {}
+        self.xic_pending = set()
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
@@ -311,6 +321,7 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar(); self.progress.setFixedWidth(260); self.progress.setTextVisible(True); self.progress.hide()
         self.statusBar().addPermanentWidget(self.progress)
         toolbar = QToolBar("Display", self)
+        self.display_toolbar = toolbar
         self.addToolBar(toolbar)
         self.tic_actions = {}
         for polarity in ("+", "-"):
@@ -322,6 +333,15 @@ class MainWindow(QMainWindow):
             self.tic_actions[polarity] = action
         self.show_tic_positive = self.tic_actions["+"]
         self.show_tic_negative = self.tic_actions["-"]
+        self.xic_input = QLineEdit(self)
+        self.xic_input.setPlaceholderText("Extract m/z…")
+        self.xic_input.setMaximumWidth(140)
+        self.xic_input.setToolTip("Enter an m/z and press Enter to add an extracted TIC (default ±2 m/z).")
+        self.xic_input.setValidator(QDoubleValidator(0, 1e7, 8, self.xic_input))
+        self.xic_input.returnPressed.connect(self.add_xic_from_input)
+        self.xic_input_action = toolbar.addWidget(self.xic_input)
+        for entry in settings.extracted_tics():
+            self.create_xic_button(entry["mass"], entry["radius"], entry["enabled"])
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Manage mzML locations…", self.choose_folder),
                            ("Choose mounted remote folder…", self.choose_remote_folder),
@@ -460,6 +480,109 @@ class MainWindow(QMainWindow):
     def set_show_tic(self, polarity, show):
         settings.set_show_tic(show, polarity)
         self.draw_uv()
+
+    def save_xic_preferences(self):
+        settings.set_extracted_tics(list(self.xic_entries.values()))
+
+    def create_xic_button(self, mass, radius=2.0, enabled=True):
+        if mass in self.xic_entries:
+            return
+        self.xic_entries[mass] = {"mass": mass, "radius": radius, "enabled": enabled}
+        color = XIC_COLORS[self.xic_color_index % len(XIC_COLORS)]
+        self.xic_color_index += 1
+        self.xic_colors[mass] = color
+        button = QToolButton(self)
+        button.setText(str(mass).removesuffix(".0"))
+        button.setCheckable(True)
+        button.setChecked(enabled)
+        button.setStyleSheet(f"QToolButton {{ color: {color}; }}")
+        button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        button.customContextMenuRequested.connect(lambda position, m=mass, b=button: self.xic_context_menu(m, b.mapToGlobal(position)))
+        button.toggled.connect(lambda checked, m=mass: self.toggle_xic(m, checked))
+        self.xic_buttons[mass] = button
+        self.xic_widget_actions[mass] = self.display_toolbar.insertWidget(self.xic_input_action, button)
+        self.update_xic_tooltip(mass)
+
+    def update_xic_tooltip(self, mass):
+        radius = self.xic_entries[mass]["radius"]
+        self.xic_buttons[mass].setToolTip(f"Extracted TIC at m/z {self.xic_buttons[mass].text()} ±{radius:g}.\nPositive: solid; negative: dashed.\nRight-click to change the extraction range or remove this button.")
+
+    def add_xic_from_input(self):
+        try:
+            mass = float(self.xic_input.text())
+            if not np.isfinite(mass) or mass <= 0:
+                raise ValueError
+        except ValueError:
+            self.statusBar().showMessage("Enter a finite, positive m/z value to extract.")
+            return
+        self.create_xic_button(mass)
+        self.xic_buttons[mass].setChecked(True)
+        self.xic_input.clear()
+        self.save_xic_preferences()
+        self.mode.setCurrentText("UV traces")
+        self.draw_uv()
+
+    def toggle_xic(self, mass, enabled):
+        self.xic_entries[mass]["enabled"] = enabled
+        self.save_xic_preferences()
+        if enabled:
+            self.mode.setCurrentText("UV traces")
+        self.draw_uv()
+
+    def xic_context_menu(self, mass, position):
+        menu = QMenu(self)
+        change = menu.addAction("Change extraction range…")
+        remove = menu.addAction("Remove extracted TIC")
+        selected = menu.exec(position)
+        if selected == change:
+            self.change_xic_range(mass)
+        elif selected == remove:
+            self.remove_xic(mass)
+
+    def change_xic_range(self, mass):
+        radius, accepted = QInputDialog.getDouble(self, f"Extract m/z {self.xic_buttons[mass].text()}",
+            "Extract intensities within ± this many m/z units:", self.xic_entries[mass]["radius"], 0.001, 1000, 3)
+        if accepted:
+            self.xic_entries[mass]["radius"] = radius
+            self.xic_results = {key: points for key, points in self.xic_results.items() if key[2] != mass}
+            self.update_xic_tooltip(mass)
+            self.save_xic_preferences()
+            self.draw_uv()
+
+    def remove_xic(self, mass):
+        self.xic_entries.pop(mass)
+        self.xic_colors.pop(mass)
+        action = self.xic_widget_actions.pop(mass)
+        self.display_toolbar.removeAction(action)
+        self.xic_buttons.pop(mass).deleteLater()
+        action.deleteLater()
+        self.xic_results = {key: points for key, points in self.xic_results.items() if key[2] != mass}
+        self.save_xic_preferences()
+        self.draw_uv()
+
+    def xic_points(self, path, run, mass):
+        entry = self.xic_entries[mass]
+        key = (path, id(run), mass, entry["radius"])
+        if key not in self.xic_results and key not in self.xic_pending:
+            self.xic_pending.add(key)
+            if self.active_load is None:
+                self.statusBar().showMessage(f"Extracting TIC at m/z {self.xic_buttons[mass].text()} ±{entry['radius']:g}…")
+            def ready(token, points, error):
+                self.xic_pending.discard(key)
+                current = self.xic_entries.get(mass)
+                if self.runs.get(path) is not run or current is None or current["radius"] != key[3]:
+                    return
+                if error:
+                    self.xic_results[key] = ()
+                    self.statusBar().showMessage(f"Unable to extract m/z {self.xic_buttons[mass].text()}: {error}")
+                    return
+                self.xic_results[key] = points
+                if current["enabled"]:
+                    self.stream_timer.start()
+                if not points and self.active_load is None:
+                    self.statusBar().showMessage("Extracted TIC requires mass spectra; this measurement has chromatograms only.")
+            self.submit(self.load_token, extracted_tic, ready, run, mass, entry["radius"])
+        return self.xic_results.get(key, ())
 
     def set_snap_mass_cursor(self, enabled):
         settings.set_snap_mass_cursor(enabled)
@@ -771,10 +894,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements across {len(self.folders)} location(s). Select one or more." if self.files.count() else "No mzML files or matched measurements found in configured locations.")
 
     def notify_new_measurements(self, paths):
-        expansion = self.files.folder_expansion()
         names = sorted(path.name for path in paths)
         message = f"New measurement found: {names[0]}" if len(names) == 1 else f"{len(names)} new measurements found: " + ", ".join(names[:3]) + ("…" if len(names) > 3 else "")
         self.statusBar().showMessage(message)
+        if self.desktop_notifications is None:
+            self.desktop_notifications = DesktopNotifications(self)
+            self.desktop_notifications.activated.connect(self.focus_new_results)
+            self.desktop_notifications.failed.connect(self.focus_new_results)
+        if self.desktop_notifications.show("New result available", message):
+            return
+        self.focus_new_results()
+
+    def focus_new_results(self):
+        expansion = self.files.folder_expansion()
         if self.isMinimized():
             self.showNormal()
         else:
@@ -834,6 +966,8 @@ class MainWindow(QMainWindow):
                 self.pool.setMaxThreadCount(3 + len(self.paused_loads))
             self.active_load = None
         self.runs = {p: r for p, r in self.runs.items() if p in paths}
+        self.xic_results = {key: points for key, points in self.xic_results.items()
+                            if key[0] in self.runs and key[1] == id(self.runs[key[0]])}
         self.failed_loads.intersection_update(paths)
         self.stream_uv = {p: self.stream_uv.get(p, []) for p in paths if p not in self.runs}
         self.stream_tic = {p: self.stream_tic.get(p, []) for p in paths if p not in self.runs}
@@ -1024,6 +1158,7 @@ class MainWindow(QMainWindow):
             return
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
         if path in selected:
+            self.xic_results = {key: points for key, points in self.xic_results.items() if key[0] != path}
             self.runs[path] = run
             self.run_data = run
         self.stream_uv.pop(path, None)
@@ -1175,7 +1310,9 @@ class MainWindow(QMainWindow):
         self.uv.tic_view.clear()
         enabled_polarities = {polarity for polarity in ("+", "-") if settings.show_tic(polarity)}
         show_tic = bool(enabled_polarities)
-        self.uv.showAxis("right", show_tic)
+        enabled_xics = [mass for mass, entry in self.xic_entries.items() if entry["enabled"]]
+        self.uv.setLabel("right", "MS TIC / extracted TIC" if enabled_xics else "MS TIC")
+        self.uv.showAxis("right", show_tic or bool(enabled_xics))
         if loading:
             loading_overlay(self.uv, True)
         if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
@@ -1190,6 +1327,7 @@ class MainWindow(QMainWindow):
             return
         all_times = []
         tic_by_polarity = {"+": {}, "-": {}}
+        extracted = {mass: {"+": {}, "-": {}} for mass in enabled_xics}
         selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
         for index, path in enumerate(selected):
             if path in self.runs:
@@ -1212,14 +1350,29 @@ class MainWindow(QMainWindow):
                 for time, intensity, polarity in tic:
                     if polarity in enabled_polarities:
                         tic_by_polarity[polarity][time] = tic_by_polarity[polarity].get(time, 0) + intensity
+            if path in self.runs:
+                for mass in enabled_xics:
+                    for time, intensity, polarity in self.xic_points(path, self.runs[path], mass):
+                        series = extracted[mass][polarity]
+                        series[time] = series.get(time, 0) + intensity
         if show_tic:
             for polarity, color, label in (("+", "#4ecf88", "MS TIC (+)"), ("-", "#f36f6f", "MS TIC (-)")):
                 if tic_by_polarity[polarity]:
                     points = sorted(tic_by_polarity[polarity].items())
                     values = np.asarray(points, dtype=float)
                     self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1], pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine), name=label))
+        for mass in enabled_xics:
+            for polarity, style in (("+", Qt.PenStyle.SolidLine), ("-", Qt.PenStyle.DashLine)):
+                if extracted[mass][polarity]:
+                    values = np.asarray(sorted(extracted[mass][polarity].items()), dtype=float)
+                    radius = self.xic_entries[mass]["radius"]
+                    label = f"Extracted TIC {self.xic_buttons[mass].text()} ±{radius:g} ({polarity})"
+                    self.uv.tic_view.addItem(pg.PlotCurveItem(values[:, 0], values[:, 1],
+                        pen=pg.mkPen(self.xic_colors[mass], width=1.8, style=style), name=label))
         suffix = " (streaming)" if self.stream_uv or self.stream_tic else ""
         title = "UV / DAD" + "".join(f" + MS TIC ({polarity})" for polarity in ("+", "-") if polarity in enabled_polarities)
+        if enabled_xics:
+            title += " + extracted TIC"
         self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"{title} — target {target} nm{suffix}; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times))
@@ -1301,6 +1454,8 @@ class MainWindow(QMainWindow):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event):
+        if self.desktop_notifications is not None:
+            self.desktop_notifications.close()
         if hasattr(self, "open_request_server"):
             self.open_request_server.close()
         self.source_refresh_timer.stop(); self.stream_timer.stop()

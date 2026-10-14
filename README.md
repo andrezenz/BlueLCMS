@@ -103,6 +103,8 @@ updates the existing shortcut. To remove the shortcut, delete
 In mass spectra, scroll over the bottom **m/z** axis to zoom horizontally around
 the cursor. Scrolling inside the plotting area zooms intensity while keeping
 zero fixed. Positive and negative spectra share the same m/z range.
+Dragging across a mass spectrum highlights the proposed horizontal zoom range
+until the mouse is released.
 Hover inside either mass-spectrum plot to show a vertical cursor guideline and
 its m/z coordinate to four decimal places.
 Click a mass spectrum to pin a reference and show labeled guides at reference
@@ -123,8 +125,12 @@ rescans of configured locations. It is enabled by default, remembers your
 preference, and preserves the current selection and plots during a rescan.
 **Settings → Alert when new measurements are found** is also enabled by default
 and remembers your preference. New mzML files found during a background rescan
-are announced in the status bar; BlueLCMS restores its window if minimized,
-requests focus, and signals taskbar attention. Initial scans and returning
+are announced in the status bar. On Linux, a native **New result available**
+notification lists the new files; clicking it brings the running app forward.
+Automatic focus requests are avoided there to prevent GNOME's generic ready
+notification. On other platforms, or when native notifications are unavailable,
+BlueLCMS restores its window if minimized, requests focus, and signals taskbar
+attention. Initial scans and returning
 previously known files do not trigger alerts. Focus activation depends on the
 desktop's focus policy.
 
@@ -258,6 +264,15 @@ changing the UV signal scale.
 Use the independent **MS TIC (+)** and **MS TIC (-)** toolbar buttons to show or
 hide positive and negative TIC traces. Both preferences persist across restarts
 and are respected for completed measurements and live streaming alike.
+
+Enter an m/z in the field beside **MS TIC (-)** and press **Enter** to create an
+extracted-TIC toggle button. Its default window is **±2 m/z**. Right-click the
+button to change that window or remove the trace. Positive extraction is drawn
+solid and negative extraction dashed, with colors matching the buttons. These
+overlays can remain visible independently of the total TIC buttons. Extraction
+sums the original scan intensities within the inclusive window and runs in
+background workers after spectra are loaded. Buttons, ranges, and enabled states
+are remembered across restarts.
 
 ## Opening measurements from other programs
 

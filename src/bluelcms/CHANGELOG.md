@@ -3,6 +3,18 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev7
+
+- Added an m/z entry beside the TIC controls. Enter creates a toggleable extracted
+  TIC button with a default ±2 m/z window; right-click changes the range or removes
+  it. Buttons, ranges, and enabled states persist across restarts.
+- Extracted traces are calculated in background workers and show positive and
+  negative ion currents separately, even when the total TIC buttons are off.
+- Added a shaded preview of the m/z interval while dragging to zoom a spectrum.
+- On Linux desktops, new-file alerts now use a native **New result available**
+  notification instead of triggering GNOME's generic ready message. Clicking the
+  notification requests focus for the running app.
+
 ## 1.0.2.dev6
 
 - Clicking a mass spectrum pins a reference mass and displays NH₃, 2NH₃, Na,

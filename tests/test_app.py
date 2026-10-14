@@ -775,6 +775,43 @@ def test_mass_click_pins_exact_loss_guidelines_with_contrast_tiers():
         plot.close()
 
 
+def test_mass_drag_previews_horizontal_zoom_range():
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.setXRange(100, 200, padding=0)
+        plot.setYRange(0, 100, padding=0)
+        application.processEvents()
+        def point(mass):
+            return plot.mapFromScene(plot.view.mapViewToScene(QPointF(mass, 50)))
+        QTest.mousePress(plot.viewport(), Qt.MouseButton.LeftButton, pos=point(120))
+        for mass in (140, 160):
+            QTest.qWait(30)
+            position = QPointF(point(mass))
+            event = QMouseEvent(QEvent.Type.MouseMove, position,
+                QPointF(plot.viewport().mapToGlobal(point(mass))),
+                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+            QApplication.sendEvent(plot.viewport(), event)
+            application.processEvents()
+        assert plot.zoom_region.isVisible()
+        np.testing.assert_allclose(plot.zoom_region.getRegion(), [120, 160], atol=.2)
+        np.testing.assert_allclose(plot.view.viewRange()[0], [100, 200])
+        plot.clear()
+        assert plot.zoom_region in plot.items()
+        QTest.mouseRelease(plot.viewport(), Qt.MouseButton.LeftButton, pos=point(160))
+        application.processEvents()
+        assert not plot.zoom_region.isVisible()
+        assert plot.reference_mass is None
+        np.testing.assert_allclose(plot.view.viewRange()[0], [120, 160], atol=.2)
+        np.testing.assert_allclose(plot.view.viewRange()[1], [0, 100])
+    finally:
+        plot.close()
+
+
 def test_mass_snapping_uses_combined_histogram_peaks_and_configured_radius():
     from bluelcms.views import MassPlot
 

@@ -297,6 +297,23 @@ def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):
     return result
 
 
+def extracted_tic(run: Run, mass: float, radius: float = 2.0):
+    """Sum each scan's intensities in an inclusive m/z window, by polarity."""
+    if not np.isfinite(mass) or mass <= 0 or not np.isfinite(radius) or radius <= 0:
+        raise ValueError("Extraction mass and radius must be finite and positive")
+    points = []
+    previous_axis = None
+    mask = None
+    for scan in run.scans:
+        if scan.polarity not in ("+", "-"):
+            continue
+        if scan.mz is not previous_axis:
+            mask = (scan.mz >= mass - radius) & (scan.mz <= mass + radius)
+            previous_axis = scan.mz
+        points.append((scan.time, float(scan.intensity[mask].sum(dtype=np.float64)), scan.polarity))
+    return tuple(sorted(points))
+
+
 def display_bin_width(minimum: float, maximum: float, pixels: int) -> float:
     """Choose a native-grid multiple wide enough for the current view."""
     span = maximum - minimum

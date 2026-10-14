@@ -104,6 +104,31 @@ def set_mass_cursor_snap_range(radius: float) -> None:
     settings().setValue("mass_cursor_snap_range", radius)
 
 
+def extracted_tics() -> list[dict]:
+    import json
+    import math
+    try:
+        entries = json.loads(settings().value("extracted_tics", "[]", type=str))
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    result = []
+    for entry in entries:
+        try:
+            mass, radius = float(entry["mass"]), float(entry["radius"])
+            if math.isfinite(mass) and mass > 0 and math.isfinite(radius) and radius > 0:
+                result.append({"mass": mass, "radius": radius, "enabled": bool(entry.get("enabled", True))})
+        except (TypeError, ValueError, KeyError):
+            continue
+    return result
+
+
+def set_extracted_tics(entries: list[dict]) -> None:
+    import json
+    settings().setValue("extracted_tics", json.dumps(entries, allow_nan=False))
+
+
 def integration_folder() -> Path:
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return data_home / "BlueLCMS" / "integrations"
