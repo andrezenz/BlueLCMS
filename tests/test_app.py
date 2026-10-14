@@ -742,6 +742,94 @@ def test_mass_hover_guideline_survives_redraw_without_changing_ranges():
         plot.close()
 
 
+def test_mass_click_pins_exact_loss_guidelines_with_contrast_tiers():
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.setXRange(650, 720, padding=0)
+        plot.setYRange(0, 100, padding=0)
+        application.processEvents()
+        before = np.asarray(plot.view.viewRange())
+        position = plot.mapFromScene(plot.view.mapViewToScene(QPointF(700, 50)))
+        QTest.mouseClick(plot.viewport(), Qt.MouseButton.LeftButton, pos=position)
+        application.processEvents()
+        assert plot.reference_mass == pytest.approx(700, abs=.1)
+        expected_offsets = [0, 17.026549101, 22.989769282, 34.053098202, 45.979538564, 40.016318383]
+        np.testing.assert_allclose([plot.reference_mass - line.value() for line in plot.reference_lines], expected_offsets)
+        alpha = [line.pen.color().alpha() for line in plot.reference_lines]
+        assert plot.cursor_line.pen.color().alpha() > alpha[1] == alpha[2] > alpha[3] == alpha[4] == alpha[5]
+        reference = plot.reference_mass
+        plot.move_cursor(plot.view.mapViewToScene(QPointF(690, 50)))
+        assert plot.reference_mass == reference
+        plot.clear()
+        assert all(line in plot.items() for line in plot.reference_lines)
+        np.testing.assert_allclose(plot.view.viewRange(), before)
+        plot.set_mass_reference(710)
+        assert len(plot.reference_lines) == 6
+        assert plot.reference_lines[0].value() == 710
+    finally:
+        plot.close()
+
+
+def test_mass_snapping_uses_combined_histogram_peaks_and_configured_radius():
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.setXRange(690, 720, padding=0)
+        plot.setYRange(0, 100, padding=0)
+        application.processEvents()
+        plot.data = [(np.array([700.]), np.array([1e8]))]
+        plot.snap_data = [(np.array([698.4, 701, 708]), np.array([8, 15, 1e6])),
+                          (np.array([698.4, 702]), np.array([8, 1]))]
+        plot.set_cursor_snapping(True, 5)
+        assert plot.snapped_mass(700) == pytest.approx(698.4)
+        plot.move_cursor(plot.view.mapViewToScene(QPointF(700, 50)))
+        assert plot.cursor_line.value() == pytest.approx(698.4)
+        plot.view.mass_clicked.emit(700)
+        assert plot.reference_mass == pytest.approx(698.4)
+        assert plot.snapped_mass(715) == 715
+        plot.set_cursor_snapping(True, .25)
+        assert plot.snapped_mass(700) == 700
+        assert plot.snapped_mass(701.1) == 701
+        plot.set_cursor_snapping(False, 5)
+        assert plot.snapped_mass(700) == 700
+    finally:
+        plot.close()
+
+
+def test_mass_cursor_snapping_preferences_persist(tmp_path, monkeypatch):
+    from bluelcms import app as app_module
+
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    try:
+        assert settings.mass_cursor_snap_range() == 5
+        window.snap_mass_cursor.setChecked(True)
+        assert window.positive.snap_enabled and window.negative.snap_enabled
+        monkeypatch.setattr(app_module.QInputDialog, "getDouble", lambda *args: (1.5, True))
+        window.choose_mass_cursor_snap_range()
+        assert window.positive.snap_range == window.negative.snap_range == 1.5
+    finally:
+        window.close()
+    reopened = MainWindow()
+    try:
+        assert reopened.snap_mass_cursor.isChecked()
+        assert reopened.positive.snap_enabled and reopened.negative.snap_enabled
+        assert reopened.positive.snap_range == reopened.negative.snap_range == 1.5
+    finally:
+        reopened.close()
+
+
 def test_cached_item_is_marked(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)

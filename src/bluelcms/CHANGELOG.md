@@ -3,6 +3,15 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev6
+
+- Clicking a mass spectrum pins a reference mass and displays NH₃, 2NH₃, Na,
+  2Na, and NH₃+Na subtraction guides with labeled m/z values.
+- Single-loss guides have lower contrast than the mouse cursor; combined-loss
+  guides are fainter still. Guides survive zoom and histogram redraws.
+- Added persistent cursor snapping to the highest-intensity peak in an adjustable
+  range, defaulting to ±5 m/z. Snapping also sets the clicked reference mass.
+
 ## 1.0.2.dev5
 
 - Added a persistent, default-on **Alert when new measurements are found** setting.

@@ -88,6 +88,22 @@ def set_alert_new_measurements(enabled: bool) -> None:
     settings().setValue("alert_new_measurements", enabled)
 
 
+def snap_mass_cursor() -> bool:
+    return settings().value("snap_mass_cursor", False, type=bool)
+
+
+def set_snap_mass_cursor(enabled: bool) -> None:
+    settings().setValue("snap_mass_cursor", enabled)
+
+
+def mass_cursor_snap_range() -> float:
+    return settings().value("mass_cursor_snap_range", 5.0, type=float)
+
+
+def set_mass_cursor_snap_range(radius: float) -> None:
+    settings().setValue("mass_cursor_snap_range", radius)
+
+
 def integration_folder() -> Path:
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return data_home / "BlueLCMS" / "integrations"

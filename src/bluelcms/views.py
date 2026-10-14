@@ -91,6 +91,8 @@ class UVPlot(pg.PlotWidget):
 
 class MassPlot(pg.PlotWidget):
     changed = Signal()
+    NH3_MASS = 17.026549101
+    NA_MASS = 22.989769282
 
     def __init__(self, title):
         self.view = MassViewBox()
@@ -99,6 +101,12 @@ class MassPlot(pg.PlotWidget):
         self.setLabel("left", "Summed intensity")
         self.showGrid(x=True, y=True, alpha=.2)
         self.data = []
+        self.snap_data = []
+        self.snap_enabled = False
+        self.snap_range = 5.0
+        self.cursor_position = None
+        self.reference_mass = None
+        self.reference_lines = []
         self.view.sigRangeChanged.connect(lambda *_: self.changed.emit())
         self.view.reset_requested.connect(self.reset)
         self.cursor_line = pg.InfiniteLine(
@@ -110,15 +118,65 @@ class MassPlot(pg.PlotWidget):
         self.cursor_line.hide()
         self.addItem(self.cursor_line, ignoreBounds=True)
         self.scene().sigMouseMoved.connect(self.move_cursor)
+        self.view.mass_clicked.connect(self.set_mass_reference)
         # PlotWidget installs clear as an instance alias to PlotItem.clear.
         self.clear = self.clear_spectra
 
     def move_cursor(self, position):
+        self.cursor_position = position
         if self.isEnabled() and self.view.sceneBoundingRect().contains(position):
             self.cursor_line.show()
-            self.cursor_line.setPos(self.view.mapSceneToView(position).x())
+            self.cursor_line.setPos(self.snapped_mass(self.view.mapSceneToView(position).x()))
         else:
             self.cursor_line.hide()
+
+    def set_cursor_snapping(self, enabled, radius):
+        self.snap_enabled = enabled
+        self.snap_range = radius
+        if self.cursor_line.isVisible() and self.cursor_position is not None:
+            self.move_cursor(self.cursor_position)
+
+    def snapped_mass(self, mass):
+        if not self.snap_enabled:
+            return mass
+        masses, intensities = [], []
+        for x, y in self.snap_data or self.data:
+            left = np.searchsorted(x, mass - self.snap_range, side="left")
+            right = np.searchsorted(x, mass + self.snap_range, side="right")
+            values, heights = np.asarray(x[left:right]), np.asarray(y[left:right])
+            valid = np.isfinite(values) & np.isfinite(heights) & (heights > 0)
+            masses.extend(values[valid]); intensities.extend(heights[valid])
+        if not masses:
+            return mass
+        positions, inverse = np.unique(masses, return_inverse=True)
+        heights = np.bincount(inverse, weights=intensities)
+        strongest = positions[heights == heights.max()]
+        return float(strongest[np.argmin(np.abs(strongest - mass))])
+
+    def set_mass_reference(self, mass):
+        mass = self.snapped_mass(mass)
+        self.reference_mass = mass
+        for line in self.reference_lines:
+            self.removeItem(line)
+        self.reference_lines = []
+        offsets = (
+            ("Reference", 0, 230, .87),
+            ("−NH₃", self.NH3_MASS, 180, .77),
+            ("−Na", self.NA_MASS, 180, .67),
+            ("−2NH₃", 2 * self.NH3_MASS, 95, .57),
+            ("−2Na", 2 * self.NA_MASS, 95, .47),
+            ("−NH₃−Na", self.NH3_MASS + self.NA_MASS, 95, .37),
+        )
+        for name, offset, alpha, label_position in offsets:
+            color = (255, 210, 90, alpha)
+            line = pg.InfiniteLine(
+                pos=mass - offset, angle=90, movable=False,
+                pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
+                label=f"{name}\nm/z {{value:.4f}}",
+                labelOpts={"position": label_position, "color": color, "fill": (16, 33, 45, 160)})
+            line.setZValue(15)
+            self.addItem(line, ignoreBounds=True)
+            self.reference_lines.append(line)
 
     def leaveEvent(self, event):
         self.cursor_line.hide()
@@ -129,6 +187,8 @@ class MassPlot(pg.PlotWidget):
         # Histogram redraws clear data items; keep the hover overlay attached.
         if hasattr(self, "cursor_line"):
             self.addItem(self.cursor_line, ignoreBounds=True)
+            for line in self.reference_lines:
+                self.addItem(line, ignoreBounds=True)
 
     def reset(self):
         if self.data:
@@ -144,6 +204,14 @@ class MassPlot(pg.PlotWidget):
 
 class MassViewBox(ResetViewBox):
     """Wheel scales intensity in the plot or m/z over the x-axis."""
+    mass_clicked = Signal(float)
+
+    def mouseClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            self.mass_clicked.emit(self.mapToView(event.pos()).x())
+        else:
+            super().mouseClickEvent(event)
 
     def wheelEvent(self, event, axis=None):
         event.accept()

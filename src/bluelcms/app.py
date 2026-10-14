@@ -346,6 +346,14 @@ class MainWindow(QMainWindow):
         self.alert_new_measurements.setChecked(settings.alert_new_measurements())
         self.alert_new_measurements.toggled.connect(settings.set_alert_new_measurements)
         menu.addAction(self.alert_new_measurements)
+        self.snap_mass_cursor = QAction("Snap mass cursor to highest peak", self)
+        self.snap_mass_cursor.setCheckable(True)
+        self.snap_mass_cursor.setChecked(settings.snap_mass_cursor())
+        self.snap_mass_cursor.toggled.connect(self.set_snap_mass_cursor)
+        menu.addAction(self.snap_mass_cursor)
+        snap_range = QAction("Mass cursor snap range…", self)
+        snap_range.triggered.connect(self.choose_mass_cursor_snap_range)
+        menu.addAction(snap_range)
         update_menu = self.menuBar().addMenu("Update")
         update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
@@ -368,6 +376,7 @@ class MainWindow(QMainWindow):
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
+        self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
@@ -451,6 +460,22 @@ class MainWindow(QMainWindow):
     def set_show_tic(self, polarity, show):
         settings.set_show_tic(show, polarity)
         self.draw_uv()
+
+    def set_snap_mass_cursor(self, enabled):
+        settings.set_snap_mass_cursor(enabled)
+        self.update_cursor_snapping()
+
+    def choose_mass_cursor_snap_range(self):
+        radius, accepted = QInputDialog.getDouble(self, "Mass cursor snap range",
+            "Search for the highest peak within ± this many m/z units:",
+            settings.mass_cursor_snap_range(), 0.001, 1000, 3)
+        if accepted:
+            settings.set_mass_cursor_snap_range(radius)
+            self.update_cursor_snapping()
+
+    def update_cursor_snapping(self):
+        for plot in (self.positive, self.negative):
+            plot.set_cursor_snapping(settings.snap_mass_cursor(), settings.mass_cursor_snap_range())
 
     def set_cache_expiry(self, days):
         settings.set_cache_expiry_days(days)
@@ -1238,6 +1263,7 @@ class MainWindow(QMainWindow):
     def _draw_histograms(self):
         for polarity, plot, title in (("+", self.positive, "Positive ions"), ("-", self.negative, "Negative ions")):
             plot.clear(); plot.data = []; plot.setTitle(title)
+            plot.snap_data = [result[polarity] for result in self.histograms.values()]
             low, high = plot.getViewBox().viewRange()[0]; pixels = max(1, int(plot.getViewBox().width()))
             full_x = [result[polarity][0] for result in self.histograms.values() if len(result[polarity][0])]
             if full_x and (high < min(x.min() for x in full_x) or low > max(x.max() for x in full_x)):

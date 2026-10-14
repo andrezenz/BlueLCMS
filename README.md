@@ -105,6 +105,18 @@ the cursor. Scrolling inside the plotting area zooms intensity while keeping
 zero fixed. Positive and negative spectra share the same m/z range.
 Hover inside either mass-spectrum plot to show a vertical cursor guideline and
 its m/z coordinate to four decimal places.
+Click a mass spectrum to pin a reference and show labeled guides at reference
+minus NH₃, 2NH₃, Na, 2Na, and NH₃+Na. NH₃ uses 17.026549 m/z and Na uses
+22.989769 m/z as literal offsets. Single-loss guides are fainter than the mouse
+cursor; combined-loss guides are fainter still. Another click replaces the
+reference. These guides do not change the spectrum or zoom.
+
+Enable **Settings → Snap mass cursor to highest peak** to snap the hover cursor
+and clicked reference to the strongest peak in a search window. Use **Mass cursor
+snap range…** to change the window; the default is ±5 m/z. Both preferences
+persist across restarts. Snapping uses the histogram before screen aggregation
+and sums intensities across selected measurements. If there is no positive peak
+in the window, the cursor remains at its unsnapped position.
 
 **Settings → Automatically refresh sources every minute** enables background
 rescans of configured locations. It is enabled by default, remembers your
