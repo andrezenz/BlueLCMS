@@ -329,6 +329,9 @@ class FakePausableLoad:
         self.paused = False
         self.resumed = True
 
+    def cancel(self):
+        self.resume()
+
 
 def test_load_job_retains_parser_state_while_paused(monkeypatch, tmp_path):
     from threading import Event, Thread

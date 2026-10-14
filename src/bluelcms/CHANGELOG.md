@@ -3,6 +3,15 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev8
+
+- Fixed update restarts leaving the original session open: source, packaged, and
+  Windows installer restart paths now explicitly close the old window.
+- Shutdown cancels paused/active loaders and stops timers, preventing suspended
+  workers and late callbacks from keeping or reopening the old session.
+- The external-open endpoint is released before launching the replacement;
+  failed launches leave the current session available.
+
 ## 1.0.2.dev7
 
 - Added an m/z entry beside the TIC controls. Enter creates a toggleable extracted

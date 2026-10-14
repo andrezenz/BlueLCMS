@@ -180,6 +180,7 @@ class PausableLoadJob(Job):
         super().__init__(token, function, *args)
         self.ready = Event()
         self.ready.set()
+        self.cancelled = Event()
 
     def pause(self):
         self.ready.clear()
@@ -187,8 +188,17 @@ class PausableLoadJob(Job):
     def resume(self):
         self.ready.set()
 
-    def report_progress(self, done, total):
+    def cancel(self):
+        self.cancelled.set()
+        self.ready.set()
+
+    def checkpoint(self):
         self.ready.wait()
+        if self.cancelled.is_set():
+            raise InterruptedError("Loading cancelled")
+
+    def report_progress(self, done, total):
+        self.checkpoint()
         self.signals.progress.emit(self.token, done, total)
 
 
@@ -201,6 +211,7 @@ class VendorLoadJob(PausableLoadJob):
 
     def run(self):
         try:
+            self.checkpoint()
             result = load_vendor_measurement(
                 self.measurement,
                 progress=self.report_progress)
@@ -229,19 +240,19 @@ class LoadJob(PausableLoadJob):
                 tic = []
 
         def stream(scan):
-            self.ready.wait()
+            self.checkpoint()
             if len(scan.wavelength) and scan.wavelength.min() <= self.wavelength <= scan.wavelength.max():
                 index = int(np.argmin(np.abs(scan.wavelength - self.wavelength)))
                 points.append((scan.time, scan.intensity[index], scan.wavelength[index]))
                 if len(points) >= 64:
                     flush()
         def stream_ms(scan):
-            self.ready.wait()
+            self.checkpoint()
             tic.append((scan.time, float(scan.intensity.sum()), scan.polarity))
             if len(tic) >= 64:
                 flush()
         try:
-            self.ready.wait()
+            self.checkpoint()
             result = load_run(self.args[0], progress=self.report_progress, dad_callback=stream, scan_callback=stream_ms)
             flush()
         except Exception as error:
@@ -302,6 +313,7 @@ class MainWindow(QMainWindow):
         self.external_requests = []
         self.pending_view_request = None
         self.last_uv_bounds = None
+        self.closing = False
         self.source_history = {}
         self.new_measurements = set()
         self.desktop_notifications = None
@@ -428,7 +440,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
 
     def submit(self, token, function, callback, *args):
-        job = Job(token, function, *args); self.jobs.add(job); job.signals.done.connect(callback); job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
+        job = Job(token, function, *args); self.jobs.add(job)
+        job.signals.done.connect(lambda t, result, error: callback(t, result, error) if not self.closing else None)
+        job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
 
     def submit_load(self, token, path, source, source_label, callback):
         job = LoadJob(token, source, self.wavelength.value())
@@ -569,6 +583,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Extracting TIC at m/z {self.xic_buttons[mass].text()} ±{entry['radius']:g}…")
             def ready(token, points, error):
                 self.xic_pending.discard(key)
+                if self.closing:
+                    return
                 current = self.xic_entries.get(mass)
                 if self.runs.get(path) is not run or current is None or current["radius"] != key[3]:
                     return
@@ -671,18 +687,30 @@ class MainWindow(QMainWindow):
         if "helper" in result:
             answer = QMessageBox.question(self, "Install update", f"Downloaded {result['version']}. Close BlueLCMS to install it?\n\nThe installer will offer to restart when finished.")
             if answer == QMessageBox.StandardButton.Yes:
-                if start_packaged_process("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", result["helper"]]):
-                    QApplication.quit()
-                else:
+                if not self.restart_application("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", result["helper"]], packaged=True):
                     QMessageBox.warning(self, "Update failed", "The installation helper could not be started.")
             return
         self.statusBar().showMessage(f"Installed {result['version']}. Restart to use it.")
         answer = QMessageBox.question(self, "Update complete", f"Installed {result['version']}. Restart now?")
         if answer == QMessageBox.StandardButton.Yes:
-            if start_packaged_process(result["executable"], []):
-                QApplication.quit()
-            else:
+            if not self.restart_application(result["executable"], [], packaged=True):
                 QMessageBox.warning(self, "Restart failed", "Restart BlueLCMS manually to use the installed version.")
+
+    def restart_application(self, executable, arguments, packaged=False):
+        broker = getattr(self, "open_request_server", None)
+        if broker is not None:
+            broker.close()
+        result = start_packaged_process(executable, arguments) if packaged else QProcess.startDetached(executable, arguments)
+        started = result[0] if isinstance(result, tuple) else result
+        if not started:
+            if broker is not None:
+                broker.listen()
+            return False
+        # quit() alone skips closeEvent and can leave suspended worker threads
+        # alive. Close explicitly, stop workers, and release the old UI first.
+        self.close()
+        QApplication.quit()
+        return True
 
     def update_to(self, target):
         answer = QMessageBox.question(self, "Confirm update", f"Update BlueLCMS to {target}?\n\nLocal source changes will prevent the update.")
@@ -700,9 +728,8 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(self, "Update complete", f"Updated to {result['branch']} at {result['commit']}. Restart now?")
         if answer == QMessageBox.StandardButton.Yes:
             root = updater.repository_root()
-            if QProcess.startDetached(str(root / ".venv" / "bin" / "python"), [str(root / "launch.py")]):
-                QApplication.quit()
-            else:
+            python = root / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+            if not self.restart_application(str(python), [str(root / "launch.py")]):
                 QMessageBox.warning(self, "Restart failed", "Restart BlueLCMS manually to use the updated version.")
         else:
             self.statusBar().showMessage("Update complete. Restart BlueLCMS to use the new version.")
@@ -919,7 +946,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self.files.restore_folder_expansion(expansion))
 
     def files_listed(self, token, paths, error, folder=None):
-        if token != self.folder_token: return
+        if self.closing or token != self.folder_token: return
         if error: self.discovery_errors.append(error)
         else:
             if folder is not None:
@@ -933,7 +960,7 @@ class MainWindow(QMainWindow):
         self.discovery_finished()
 
     def caches_listed(self, token, entries, error):
-        if token != self.folder_token: return
+        if self.closing or token != self.folder_token: return
         self.cached_measurements = entries or {}
         if error: self.discovery_errors.append(error)
         # Older caches without source metadata can still be matched by filename.
@@ -945,7 +972,7 @@ class MainWindow(QMainWindow):
         self.discovery_finished()
 
     def measurements_listed(self, token, measurements, error):
-        if token != self.folder_token: return
+        if self.closing or token != self.folder_token: return
         if error: self.discovery_errors.append(error)
         else:
             for measurement in measurements:
@@ -1145,6 +1172,8 @@ class MainWindow(QMainWindow):
         self.pool.start(job)
 
     def loaded(self, token, path, run, error):
+        if self.closing:
+            return
         if path in self.paused_loads and token == self.paused_loads[path][1]:
             self.deferred_results[path] = (run, error)
             return
@@ -1265,6 +1294,8 @@ class MainWindow(QMainWindow):
         self.show_progress(f"Loading {marker}{source_label}", path, copied, total)
 
     def cached(self, token, path, cache, error):
+        if self.closing:
+            return
         if token != self.load_token:
             if not error:
                 self.cached_measurements[path] = cache
@@ -1454,13 +1485,20 @@ class MainWindow(QMainWindow):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event):
+        self.closing = True
+        self.load_token += 1; self.region_token += 1; self.folder_token += 1
+        self.hide()
         if self.desktop_notifications is not None:
             self.desktop_notifications.close()
         if hasattr(self, "open_request_server"):
             self.open_request_server.close()
-        self.source_refresh_timer.stop(); self.stream_timer.stop()
+        for timer in (self.source_refresh_timer, self.stream_timer, self.loading_timer, self.timer, self.histogram_redraw):
+            timer.stop()
+        self.load_queue.clear()
+        self.paused_loads.clear()
+        self.deferred_results.clear()
         for job in self.load_jobs.values():
-            job.resume()
+            job.cancel()
         self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 
