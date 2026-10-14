@@ -58,6 +58,42 @@ def test_notification_actions_only_activate_known_notifications():
     assert not notifier.notification_ids
 
 
+def test_notify_send_fallback_uses_custom_title_and_click_action(monkeypatch):
+    import bluelcms.notifications as module
+
+    application = QApplication.instance() or QApplication([])
+    calls = []
+    class SignalStub:
+        def connect(self, callback):
+            self.callback = callback
+    class ProcessStub:
+        def __init__(self, parent=None):
+            self.finished = SignalStub()
+            self.errorOccurred = SignalStub()
+        def start(self, program, args):
+            calls.append((program, args))
+        def readAllStandardOutput(self):
+            return b"default\n"
+        def deleteLater(self):
+            pass
+    monkeypatch.setattr(module, "QProcess", ProcessStub)
+    notifier = DesktopNotifications()
+    notifier.mode = "notify-send"
+    notifier.notify_send = "/usr/bin/notify-send"
+    notifier.available = True
+    activated = []
+    notifier.activated.connect(lambda: activated.append(True))
+    assert notifier.show("New result available", "sample.mzML")
+    program, arguments = calls[0]
+    assert program == "/usr/bin/notify-send"
+    assert "New result available" in arguments
+    assert "sample.mzML" in arguments
+    assert "--action=default=Open BlueLCMS" in arguments
+    process = next(iter(notifier.pending))
+    notifier.completed(process, 0, None)
+    assert activated == [True]
+
+
 @pytest.mark.skipif(sys.platform != "linux" or not shutil.which("dbus-run-session") or not shutil.which("gdbus"), reason="requires a Linux D-Bus test session")
 def test_desktop_notification_dbus_protocol_and_click_action():
     code = r'''

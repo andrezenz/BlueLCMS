@@ -3,6 +3,23 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev13
+
+- Added screen-pixel cursor snapping. Its m/z search radius narrows as the user
+  zooms in; m/z-based snapping remains available. Pixel units default to ±10
+  screen pixels and have an independent persistent range.
+- Made Ubuntu new-result notifications more robust: packaged builds explicitly
+  include Qt D-Bus, `notify-send` is used when D-Bus is unavailable, and failed
+  notifications no longer trigger GNOME's generic focus alert.
+
+## 1.0.2.dev12
+
+- Fixed Ubuntu notifications falling back to GNOME's generic “BlueLCMS is
+  ready” message when Qt D-Bus was unavailable. Packaged builds now include
+  PySide6.QtDBus, and Linux has a custom-title `notify-send` fallback.
+- Notification failures no longer request window focus on Linux; clicking a
+  supported notification still brings BlueLCMS forward.
+
 ## 1.0.2.dev11
 
 - Changed sodium guide offsets to the Na⁺ ion mass.

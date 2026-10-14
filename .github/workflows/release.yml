@@ -58,7 +58,7 @@ jobs:
         if: needs.version.outputs.prerelease != 'true'
         run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
-        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --collect-data psims --collect-data bluelcms --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
+        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --hidden-import PySide6.QtDBus --collect-data psims --collect-data bluelcms --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/BlueLCMS.desktop packaging/linux/install.sh packaging/linux/bluelcms.svg package/ && tar -C package -czf dist/${{ matrix.artifact }} .

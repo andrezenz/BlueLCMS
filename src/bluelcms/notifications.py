@@ -16,38 +16,47 @@ class DesktopNotifications(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.program = shutil.which("gdbus") if sys.platform == "linux" else None
+        self.gdbus = shutil.which("gdbus") if sys.platform == "linux" else None
+        self.notify_send = shutil.which("notify-send") if sys.platform == "linux" else None
+        self.mode = None
         self.pending = {}
         self.notification_ids = set()
         self.connection = None
         self.available = False
-        if not self.program or QApplication.platformName() in ("offscreen", "minimal"):
+        if sys.platform != "linux" or QApplication.platformName() in ("offscreen", "minimal"):
             return
         try:
             from PySide6.QtDBus import QDBusConnection
         except ImportError:
-            return
-        connection = QDBusConnection.sessionBus()
-        if not connection.isConnected():
-            return
-        service, path, interface = "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"
-        connected = connection.connect(service, path, interface, "ActionInvoked", self, SLOT("notification_action(uint,QString)"))
-        connection.connect(service, path, interface, "NotificationClosed", self, SLOT("notification_closed(uint,uint)"))
-        self.connection = connection
-        self.available = connected
+            QDBusConnection = None
+        if QDBusConnection is not None and self.gdbus:
+            connection = QDBusConnection.sessionBus()
+            if connection.isConnected():
+                service, path, interface = "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"
+                connected = connection.connect(service, path, interface, "ActionInvoked", self, SLOT("notification_action(uint,QString)"))
+                connection.connect(service, path, interface, "NotificationClosed", self, SLOT("notification_closed(uint,uint)"))
+                if connected:
+                    self.connection = connection
+                    self.mode = "gdbus"
+        if self.mode is None and self.notify_send:
+            self.mode = "notify-send"
+        self.available = self.mode is not None
 
     def show(self, title, body):
         if not self.available:
             return False
         root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
         icon = root / "bluelcms.svg" if getattr(sys, "frozen", False) else root / "packaging/linux/bluelcms.svg"
+        self.last_notification = (title, body, icon)
+        if self.mode == "notify-send":
+            return self.send_notify_send(title, body, icon)
         process = QProcess(self)
-        self.pending[process] = True
-        process.finished.connect(lambda code, status, p=process: self.completed(p, code))
+        self.pending[process] = "gdbus"
+        process.finished.connect(lambda code, status, p=process: self.completed(p, code, status))
         process.errorOccurred.connect(lambda error, p=process: self.process_error(p, error))
         # gdbus supplies the exact unsigned-ID/array/map types expected by Notify.
         # It exits immediately; Qt listens for notification clicks on the bus.
-        process.start(self.program, [
+        process.start(self.gdbus, [
             "call", "--session", "--dest", "org.freedesktop.Notifications",
             "--object-path", "/org/freedesktop/Notifications", "--timeout", "5",
             "--method", "org.freedesktop.Notifications.Notify", "--",
@@ -55,23 +64,46 @@ class DesktopNotifications(QObject):
             "['default', 'Open BlueLCMS']", "{'desktop-entry': <'BlueLCMS'>}", "5000"])
         return True
 
-    def completed(self, process, code):
-        if process not in self.pending:
+    def send_notify_send(self, title, body, icon):
+        process = QProcess(self)
+        self.pending[process] = "notify-send"
+        process.finished.connect(lambda code, status, p=process: self.completed(p, code, status))
+        process.errorOccurred.connect(lambda error, p=process: self.process_error(p, error))
+        process.start(self.notify_send, [
+            "--app-name=BlueLCMS", f"--icon={icon}",
+            "--action=default=Open BlueLCMS", "--wait", title, body])
+        return True
+
+    def completed(self, process, code, status):
+        mode = self.pending.pop(process, None)
+        if mode is None:
             return
-        self.pending.pop(process)
         output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        match = re.search(r"\((?:uint32\s+)?(\d+)", output)
         process.deleteLater()
+        if mode == "notify-send":
+            if code == 0 and output.strip() == "default":
+                self.activated.emit()
+            elif code != 0 and self.mode == "notify-send":
+                self.failed.emit()
+            return
+        match = re.search(r"\((?:uint32\s+)?(\d+)", output)
         if code == 0 and match:
             self.notification_ids.add(int(match[1]))
+        elif self.notify_send:
+            title, body, icon = self.last_notification
+            self.send_notify_send(title, body, icon)
         else:
             self.failed.emit()
 
     def process_error(self, process, error):
-        if error == QProcess.ProcessError.FailedToStart and process in self.pending:
-            self.pending.pop(process)
+        mode = self.pending.pop(process, None)
+        if error == QProcess.ProcessError.FailedToStart and mode is not None:
             process.deleteLater()
-            self.failed.emit()
+            if mode == "gdbus" and self.notify_send:
+                title, body, icon = self.last_notification
+                self.send_notify_send(title, body, icon)
+            else:
+                self.failed.emit()
 
     @Slot("uint", str)
     def notification_action(self, notification_id, action):

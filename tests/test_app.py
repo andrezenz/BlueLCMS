@@ -180,11 +180,13 @@ def test_new_file_alerts_once_and_preference_persists(tmp_path, monkeypatch):
         reopened.close()
 
 
-def test_new_measurement_notification_restores_and_requests_focus(tmp_path, monkeypatch):
+def test_new_measurement_notification_restores_and_requests_focus_on_non_linux(tmp_path, monkeypatch):
+    from bluelcms import app as app_module
     application = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     window = MainWindow()
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
     called = []
     monkeypatch.setattr(window, "isMinimized", lambda: True)
     monkeypatch.setattr(window, "showNormal", lambda: called.append("restore"))
@@ -195,6 +197,27 @@ def test_new_measurement_notification_restores_and_requests_focus(tmp_path, monk
         window.notify_new_measurements({tmp_path / "new.mzML"})
         assert called == ["restore", "raise", "activate", (window, 5000)]
         assert "new.mzML" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+
+
+def test_notification_failure_does_not_request_linux_window_focus(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    class Notifier:
+        activated = type("SignalStub", (), {"connect": lambda self, callback: None})()
+        failed = type("SignalStub", (), {"connect": lambda self, callback: None})()
+        def show(self, *args):
+            return False
+        def close(self):
+            pass
+    monkeypatch.setattr(window, "focus_new_results", lambda: pytest.fail("Linux notification failure must not trigger the generic ready alert"))
+    monkeypatch.setattr("bluelcms.app.DesktopNotifications", lambda parent: Notifier())
+    try:
+        window.notify_new_measurements({tmp_path / "sample.mzML"})
+        assert "New measurement found" in window.statusBar().currentMessage()
     finally:
         window.close()
 
@@ -877,6 +900,31 @@ def test_mass_snapping_uses_combined_histogram_peaks_and_configured_radius():
         plot.close()
 
 
+def test_pixel_snap_window_narrows_in_mz_when_zooming_in():
+    from bluelcms.views import MassPlot
+
+    application = QApplication.instance() or QApplication([])
+    plot = MassPlot("Positive ions")
+    plot.resize(800, 400)
+    plot.show()
+    try:
+        plot.snap_data = [(np.array([699.8]), np.array([100.]))]
+        plot.set_cursor_snapping(True, 10, "pixels")
+        plot.setXRange(690, 710, padding=0)
+        application.processEvents()
+        wide_radius = plot.snap_radius_in_mz()
+        assert wide_radius > .2
+        assert plot.snapped_mass(700) == pytest.approx(699.8)
+        plot.setXRange(699, 701, padding=0)
+        application.processEvents()
+        narrow_radius = plot.snap_radius_in_mz()
+        assert narrow_radius < .4
+        assert narrow_radius < wide_radius
+        assert plot.snapped_mass(700) == 700
+    finally:
+        plot.close()
+
+
 def test_mass_cursor_snapping_preferences_persist(tmp_path, monkeypatch):
     from bluelcms import app as app_module
 
@@ -891,13 +939,20 @@ def test_mass_cursor_snapping_preferences_persist(tmp_path, monkeypatch):
         monkeypatch.setattr(app_module.QInputDialog, "getDouble", lambda *args: (1.5, True))
         window.choose_mass_cursor_snap_range()
         assert window.positive.snap_range == window.negative.snap_range == 1.5
+        monkeypatch.setattr(app_module.QInputDialog, "getItem", lambda *args: ("screen pixels", True))
+        window.choose_mass_cursor_snap_unit()
+        assert window.positive.snap_unit == window.negative.snap_unit == "pixels"
+        monkeypatch.setattr(app_module.QInputDialog, "getDouble", lambda *args: (12, True))
+        window.choose_mass_cursor_snap_range()
     finally:
         window.close()
     reopened = MainWindow()
     try:
         assert reopened.snap_mass_cursor.isChecked()
         assert reopened.positive.snap_enabled and reopened.negative.snap_enabled
-        assert reopened.positive.snap_range == reopened.negative.snap_range == 1.5
+        assert reopened.positive.snap_range == reopened.negative.snap_range == 12
+        assert reopened.positive.snap_unit == reopened.negative.snap_unit == "pixels"
+        assert settings.mass_cursor_snap_range("mz") == 1.5
     finally:
         reopened.close()
 

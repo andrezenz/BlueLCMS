@@ -118,8 +118,10 @@ is shown at a time, and labels disappear when the pointer leaves the line area.
 
 Enable **Settings → Snap mass cursor to highest peak** to snap the hover cursor
 and clicked reference to the strongest peak in a search window. Use **Mass cursor
-snap range…** to change the window; the default is ±5 m/z. Both preferences
-persist across restarts. Snapping uses the histogram before screen aggregation
+snap range…** to change the window, and **Mass cursor snap units…** to choose m/z
+or screen pixels. m/z snapping defaults to ±5 m/z; pixel snapping defaults to
+±10 pixels and its mass window narrows as you zoom in. Unit, ranges, and the
+enable preference persist across restarts. Snapping uses the histogram before screen aggregation
 and sums intensities across selected measurements. If there is no positive peak
 in the window, the cursor remains at its unsnapped position.
 
@@ -131,9 +133,11 @@ and remembers your preference. New mzML files found during a background rescan
 are announced in the status bar. On Linux, a native **New result available**
 notification lists the new files; clicking it brings the running app forward.
 Automatic focus requests are avoided there to prevent GNOME's generic ready
-notification. On other platforms, or when native notifications are unavailable,
-BlueLCMS restores its window if minimized, requests focus, and signals taskbar
-attention. Initial scans and returning
+notification. A `notify-send` fallback preserves the custom title if Qt D-Bus is
+unavailable. If desktop notifications cannot be created, BlueLCMS keeps the new
+file announcement in the status bar rather than triggering GNOME's generic
+focus notification. On other platforms BlueLCMS restores its window if
+minimized, requests focus, and signals taskbar attention. Initial scans and returning
 previously known files do not trigger alerts. Focus activation depends on the
 desktop's focus policy.
 

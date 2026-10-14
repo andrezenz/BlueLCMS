@@ -96,12 +96,35 @@ def set_snap_mass_cursor(enabled: bool) -> None:
     settings().setValue("snap_mass_cursor", enabled)
 
 
-def mass_cursor_snap_range() -> float:
-    return settings().value("mass_cursor_snap_range", 5.0, type=float)
+def mass_cursor_snap_unit() -> str:
+    unit = settings().value("mass_cursor_snap_unit", "mz", type=str)
+    return unit if unit in ("mz", "pixels") else "mz"
 
 
-def set_mass_cursor_snap_range(radius: float) -> None:
-    settings().setValue("mass_cursor_snap_range", radius)
+def set_mass_cursor_snap_unit(unit: str) -> None:
+    if unit not in ("mz", "pixels"):
+        raise ValueError("Snap units must be 'mz' or 'pixels'.")
+    settings().setValue("mass_cursor_snap_unit", unit)
+
+
+def mass_cursor_snap_range(unit: str | None = None) -> float:
+    unit = unit or mass_cursor_snap_unit()
+    if unit not in ("mz", "pixels"):
+        raise ValueError("Snap units must be 'mz' or 'pixels'.")
+    default = 5.0 if unit == "mz" else 10.0
+    key = f"mass_cursor_snap_range_{unit}"
+    if unit == "mz":
+        return settings().value(key, settings().value("mass_cursor_snap_range", default, type=float), type=float)
+    return settings().value(key, default, type=float)
+
+
+def set_mass_cursor_snap_range(radius: float, unit: str | None = None) -> None:
+    unit = unit or mass_cursor_snap_unit()
+    if unit not in ("mz", "pixels") or radius <= 0:
+        raise ValueError("Snap range must be positive and use m/z or pixels.")
+    settings().setValue(f"mass_cursor_snap_range_{unit}", radius)
+    if unit == "mz":
+        settings().setValue("mass_cursor_snap_range", radius)
 
 
 def extracted_tics() -> list[dict]:

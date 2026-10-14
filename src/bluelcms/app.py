@@ -386,6 +386,9 @@ class MainWindow(QMainWindow):
         snap_range = QAction("Mass cursor snap range…", self)
         snap_range.triggered.connect(self.choose_mass_cursor_snap_range)
         menu.addAction(snap_range)
+        snap_units = QAction("Mass cursor snap units…", self)
+        snap_units.triggered.connect(self.choose_mass_cursor_snap_unit)
+        menu.addAction(snap_units)
         update_menu = self.menuBar().addMenu("Update")
         update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
@@ -605,16 +608,27 @@ class MainWindow(QMainWindow):
         self.update_cursor_snapping()
 
     def choose_mass_cursor_snap_range(self):
+        unit = settings.mass_cursor_snap_unit()
+        unit_label = "m/z" if unit == "mz" else "screen pixels"
         radius, accepted = QInputDialog.getDouble(self, "Mass cursor snap range",
-            "Search for the highest peak within ± this many m/z units:",
-            settings.mass_cursor_snap_range(), 0.001, 1000, 3)
+            f"Search for the highest peak within ± this many {unit_label}:",
+            settings.mass_cursor_snap_range(unit), 0.1 if unit == "pixels" else 0.001, 1000, 3)
         if accepted:
-            settings.set_mass_cursor_snap_range(radius)
+            settings.set_mass_cursor_snap_range(radius, unit)
+            self.update_cursor_snapping()
+
+    def choose_mass_cursor_snap_unit(self):
+        options = ("m/z", "screen pixels")
+        current = 0 if settings.mass_cursor_snap_unit() == "mz" else 1
+        option, accepted = QInputDialog.getItem(self, "Mass cursor snap units", "Snap window units:", options, current, False)
+        if accepted:
+            settings.set_mass_cursor_snap_unit("mz" if option == "m/z" else "pixels")
             self.update_cursor_snapping()
 
     def update_cursor_snapping(self):
         for plot in (self.positive, self.negative):
-            plot.set_cursor_snapping(settings.snap_mass_cursor(), settings.mass_cursor_snap_range())
+            unit = settings.mass_cursor_snap_unit()
+            plot.set_cursor_snapping(settings.snap_mass_cursor(), settings.mass_cursor_snap_range(unit), unit)
 
     def set_cache_expiry(self, days):
         settings.set_cache_expiry_days(days)
@@ -927,10 +941,16 @@ class MainWindow(QMainWindow):
         if self.desktop_notifications is None:
             self.desktop_notifications = DesktopNotifications(self)
             self.desktop_notifications.activated.connect(self.focus_new_results)
-            self.desktop_notifications.failed.connect(self.focus_new_results)
+            self.desktop_notifications.failed.connect(self.notification_failed)
         if self.desktop_notifications.show("New result available", message):
             return
-        self.focus_new_results()
+        if sys.platform == "linux":
+            self.notification_failed()
+        else:
+            self.focus_new_results()
+
+    def notification_failed(self):
+        self.statusBar().showMessage("New measurement found; see the updated sidebar.")
 
     def focus_new_results(self):
         expansion = self.files.folder_expansion()

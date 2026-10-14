@@ -104,6 +104,7 @@ class MassPlot(pg.PlotWidget):
         self.snap_data = []
         self.snap_enabled = False
         self.snap_range = 5.0
+        self.snap_unit = "mz"
         self.cursor_position = None
         self.reference_mass = None
         self.reference_lines = []
@@ -134,7 +135,7 @@ class MassPlot(pg.PlotWidget):
         self.cursor_position = position
         if self.isEnabled() and self.view.sceneBoundingRect().contains(position):
             self.cursor_line.show()
-            self.cursor_line.setPos(self.snapped_mass(self.view.mapSceneToView(position).x()))
+            self.cursor_line.setPos(self.snapped_mass(self.view.mapSceneToView(position).x(), self.snap_radius_in_mz()))
             self.update_reference_hover(position)
         else:
             self.cursor_line.hide()
@@ -156,9 +157,18 @@ class MassPlot(pg.PlotWidget):
             if line.label is not None:
                 line.label.setVisible(line is hovered)
 
-    def set_cursor_snapping(self, enabled, radius):
+    def snap_radius_in_mz(self):
+        if self.snap_unit == "pixels":
+            minimum, maximum = self.view.viewRange()[0]
+            width = self.view.sceneBoundingRect().width()
+            if width > 0:
+                return self.snap_range * (maximum - minimum) / width
+        return self.snap_range
+
+    def set_cursor_snapping(self, enabled, radius, unit="mz"):
         self.snap_enabled = enabled
         self.snap_range = radius
+        self.snap_unit = unit
         if self.cursor_line.isVisible() and self.cursor_position is not None:
             self.move_cursor(self.cursor_position)
 
@@ -166,13 +176,14 @@ class MassPlot(pg.PlotWidget):
         self.zoom_region.setRegion((min(start, end), max(start, end)))
         self.zoom_region.show()
 
-    def snapped_mass(self, mass):
+    def snapped_mass(self, mass, radius=None):
         if not self.snap_enabled:
             return mass
+        radius = self.snap_radius_in_mz() if radius is None else radius
         masses, intensities = [], []
         for x, y in self.snap_data or self.data:
-            left = np.searchsorted(x, mass - self.snap_range, side="left")
-            right = np.searchsorted(x, mass + self.snap_range, side="right")
+            left = np.searchsorted(x, mass - radius, side="left")
+            right = np.searchsorted(x, mass + radius, side="right")
             values, heights = np.asarray(x[left:right]), np.asarray(y[left:right])
             valid = np.isfinite(values) & np.isfinite(heights) & (heights > 0)
             masses.extend(values[valid]); intensities.extend(heights[valid])
@@ -184,7 +195,7 @@ class MassPlot(pg.PlotWidget):
         return float(strongest[np.argmin(np.abs(strongest - mass))])
 
     def set_mass_reference(self, mass):
-        mass = self.snapped_mass(mass)
+        mass = self.snapped_mass(mass, self.snap_radius_in_mz())
         self.reference_mass = mass
         for line in self.reference_lines:
             self.removeItem(line)
