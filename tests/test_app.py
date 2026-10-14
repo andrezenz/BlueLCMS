@@ -765,7 +765,17 @@ def test_mass_click_pins_exact_loss_guidelines_with_contrast_tiers():
         np.testing.assert_allclose([plot.reference_mass - line.value() for line in plot.reference_lines], expected_offsets)
         alpha = [line.pen.color().alpha() for line in plot.reference_lines]
         assert plot.cursor_line.pen.color().alpha() > alpha[1] == alpha[2] > alpha[3] == alpha[4] == alpha[5]
+        assert all(not line.label.isVisible() for line in plot.reference_lines)
         reference = plot.reference_mass
+        plot.update_reference_hover(plot.view.mapViewToScene(QPointF(700, 50)))
+        assert plot.reference_lines[0].label.isVisible()
+        assert all(not line.label.isVisible() for line in plot.reference_lines[1:])
+        plot.update_reference_hover(plot.view.mapViewToScene(QPointF(700 - plot.NH3_MASS, 50)))
+        assert plot.reference_lines[1].label.isVisible()
+        assert not plot.reference_lines[0].label.isVisible()
+        assert "−NH₃" in plot.reference_lines[1].label.toPlainText()
+        plot.update_reference_hover(plot.view.mapViewToScene(QPointF(698, 50)))
+        assert all(not line.label.isVisible() for line in plot.reference_lines)
         plot.move_cursor(plot.view.mapViewToScene(QPointF(690, 50)))
         assert plot.reference_mass == reference
         plot.clear()

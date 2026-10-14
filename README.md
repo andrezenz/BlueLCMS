@@ -112,6 +112,9 @@ minus NH₃, 2NH₃, Na, 2Na, and NH₃+Na. NH₃ uses 17.026549 m/z and Na uses
 22.989769 m/z as literal offsets. Single-loss guides are fainter than the mouse
 cursor; combined-loss guides are fainter still. Another click replaces the
 reference. These guides do not change the spectrum or zoom.
+Guide lines remain visible after clicking; hover within 8 screen pixels of a
+line to show its loss name and exact m/z label. Only the nearest guide's label
+is shown at a time, and labels disappear when the pointer leaves the line area.
 
 Enable **Settings → Snap mass cursor to highest peak** to snap the hover cursor
 and clicked reference to the strongest peak in a search window. Use **Mass cursor

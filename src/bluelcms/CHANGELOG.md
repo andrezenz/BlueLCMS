@@ -3,6 +3,12 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev9
+
+- Kept clicked-reference subtraction guide lines visible, but made their labels
+  appear only while the pointer hovers within 8 screen pixels of a guide. The
+  nearest guide label is shown; all guide labels hide when the pointer leaves.
+
 ## 1.0.2.dev8
 
 - Fixed update restarts leaving the original session open: source, packaged, and

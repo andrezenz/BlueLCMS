@@ -2,7 +2,7 @@
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtWidgets import QMenu
 
 
@@ -135,8 +135,26 @@ class MassPlot(pg.PlotWidget):
         if self.isEnabled() and self.view.sceneBoundingRect().contains(position):
             self.cursor_line.show()
             self.cursor_line.setPos(self.snapped_mass(self.view.mapSceneToView(position).x()))
+            self.update_reference_hover(position)
         else:
             self.cursor_line.hide()
+            self.update_reference_hover(None)
+
+    def update_reference_hover(self, position):
+        hovered = None
+        if position is not None and self.view.sceneBoundingRect().contains(position):
+            mouse_x = position.x()
+            candidates = []
+            for line in self.reference_lines:
+                x_position = self.view.mapViewToScene(QPointF(line.value(), 0)).x()
+                distance = abs(mouse_x - x_position)
+                if distance <= 8:
+                    candidates.append((distance, line))
+            if candidates:
+                hovered = min(candidates, key=lambda candidate: candidate[0])[1]
+        for line in self.reference_lines:
+            if line.label is not None:
+                line.label.setVisible(line is hovered)
 
     def set_cursor_snapping(self, enabled, radius):
         self.snap_enabled = enabled
@@ -188,10 +206,13 @@ class MassPlot(pg.PlotWidget):
                 labelOpts={"position": label_position, "color": color, "fill": (16, 33, 45, 160)})
             line.setZValue(15)
             self.addItem(line, ignoreBounds=True)
+            if line.label is not None:
+                line.label.hide()
             self.reference_lines.append(line)
 
     def leaveEvent(self, event):
         self.cursor_line.hide()
+        self.update_reference_hover(None)
         super().leaveEvent(event)
 
     def clear_spectra(self):
