@@ -58,7 +58,7 @@ jobs:
         if: needs.version.outputs.prerelease != 'true'
         run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
-        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --collect-data psims --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
+        run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --collect-data psims --collect-data bluelcms --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/BlueLCMS.desktop packaging/linux/install.sh packaging/linux/bluelcms.svg package/ && tar -C package -czf dist/${{ matrix.artifact }} .
@@ -81,6 +81,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare changelog release notes
+        run: python packaging/release_version.py --notes "${{ needs.version.outputs.version }}"
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -103,6 +109,7 @@ jobs:
           name: BlueLCMS ${{ needs.version.outputs.tag }}
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.version.outputs.prerelease == 'true' && 'false' || 'true' }}
+          body_path: release-notes.md
           files: release-assets/*
       - name: Move development release tag
         if: github.ref == 'refs/heads/dev' && steps.latest.outputs.current == 'true'
@@ -118,4 +125,5 @@ jobs:
           name: Development latest (${{ needs.version.outputs.tag }})
           prerelease: true
           make_latest: false
+          body_path: release-notes.md
           files: release-assets/*

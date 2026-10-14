@@ -58,9 +58,16 @@ def test_release_tags_classify_stable_and_development():
 def test_stamped_package_and_project_report_same_version(tmp_path):
     (tmp_path / "src/bluelcms").mkdir(parents=True)
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.0.2.dev2"\n')
+    changelog = tmp_path / "src/bluelcms/CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## 1.0.2.dev2\n\n- Current change.\n\n## 1.0.1\n\n- Older change.\n")
     release_version.stamp(tmp_path, "1.0.2.dev7")
     assert 'version = "1.0.2.dev7"' in (tmp_path / "pyproject.toml").read_text()
     assert (tmp_path / "src/bluelcms/_build_version.py").read_text() == 'VERSION = "1.0.2.dev7"\n'
+    assert "## 1.0.2.dev7" in changelog.read_text()
+    assert "## 1.0.1" in changelog.read_text()
+    notes = release_version.release_notes(tmp_path, "1.0.2.dev7")
+    assert "1.0.2.dev7" in notes and "Current change." in notes
+    assert "Older change." not in notes
 
 
 def test_source_reports_numbered_tag_or_commit_identity(tmp_path, monkeypatch):

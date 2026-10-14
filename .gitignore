@@ -10,6 +10,7 @@ dist/
 installer-dist/
 packaging/windows/bluelcms.ico
 src/bluelcms/_build_version.py
+release-notes.md
 
 # Local research data and generated analysis records
 *.mzML

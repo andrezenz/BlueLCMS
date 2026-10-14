@@ -25,6 +25,7 @@ from . import package_updater
 from .sidebar import MeasurementItem, MeasurementTree
 from .external import OpenRequestServer, forward_request, parse_request
 from .version import application_version
+from .help import DocumentDialog
 from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
@@ -346,6 +347,8 @@ class MainWindow(QMainWindow):
         about_action = QAction("About BlueLCMS", self)
         about_action.triggered.connect(self.show_about)
         about_menu.addAction(about_action)
+        for text, slot in (("Changelog…", self.show_changelog), ("External program commands…", self.show_external_commands)):
+            action = QAction(text, self); action.triggered.connect(slot); about_menu.addAction(action)
         self.files, self.folder_label = MeasurementTree(), QLabel("Choose a data folder in Settings")
         self.files.itemSelectionChanged.connect(self.select_files)
         self.folder_label.setWordWrap(True)
@@ -461,6 +464,12 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.about(self, "About BlueLCMS",
                           f"BlueLCMS\nVersion {QApplication.applicationVersion()}\n\nLC-MS and DAD data viewer")
+
+    def show_changelog(self):
+        DocumentDialog("BlueLCMS changelog", "CHANGELOG.md", self).exec()
+
+    def show_external_commands(self):
+        DocumentDialog("BlueLCMS external program commands", "EXTERNAL_COMMANDS.md", self).exec()
 
     def check_updates(self):
         self.statusBar().showMessage("Checking GitHub for updates…")

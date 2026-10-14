@@ -65,20 +65,39 @@ def stamp(root, version):
     if not VERSION.fullmatch(version):
         raise ValueError(f"Unsupported build version: {version}")
     project = root / "pyproject.toml"
-    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', project.read_text(), count=1)
+    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', project.read_text(encoding="utf-8"), count=1)
     if count != 1:
         raise ValueError("Project version could not be stamped.")
-    project.write_text(text)
-    (root / "src/bluelcms/_build_version.py").write_text(f'VERSION = "{version}"\n')
+    project.write_text(text, encoding="utf-8")
+    (root / "src/bluelcms/_build_version.py").write_text(f'VERSION = "{version}"\n', encoding="utf-8")
+    changelog = root / "src/bluelcms/CHANGELOG.md"
+    if changelog.is_file():
+        text = changelog.read_text(encoding="utf-8")
+        text = re.sub(r"(?m)^## \d+\.\d+\.\d+(?:\.dev\d+)?$", f"## {version}", text, count=1)
+        changelog.write_text(text, encoding="utf-8")
+
+
+def release_notes(root, version):
+    if not VERSION.fullmatch(version):
+        raise ValueError(f"Unsupported release version: {version}")
+    changelog = (root / "src/bluelcms/CHANGELOG.md").read_text(encoding="utf-8")
+    sections = re.split(r"(?m)^## [^\n]+\n", changelog)
+    if len(sections) < 2:
+        raise ValueError("The changelog contains no release entry.")
+    return f"# BlueLCMS {version}\n\n{sections[1].strip()}\n"
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--stamp", help="Stamp a matrix build with an allocated version")
+    parser.add_argument("--notes", help="Prepare release notes from the latest changelog entry")
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     if arguments.stamp:
         stamp(root, arguments.stamp)
+        return
+    if arguments.notes:
+        (root / "release-notes.md").write_text(release_notes(root, arguments.notes), encoding="utf-8")
         return
     declared = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     ref = os.environ["GITHUB_REF"]

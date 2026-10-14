@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bluelcms"
-version = "1.0.2.dev3"
+version = "1.0.2.dev4"
 description = "Standalone LC-MS and DAD data viewer"
 readme = "README.md"
 license = {text = "MIT"}
@@ -27,3 +27,6 @@ bluelcms-installer = "bluelcms.bootstrap:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+bluelcms = ["CHANGELOG.md", "EXTERNAL_COMMANDS.md"]

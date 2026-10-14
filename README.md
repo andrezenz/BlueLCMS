@@ -13,6 +13,12 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.
 
 ## Updates
 
+Use **About → Changelog…** for the bundled version history and
+**About → External program commands…** for copyable integration examples. Both
+are available offline. The maintained documents are
+[`src/bluelcms/CHANGELOG.md`](src/bluelcms/CHANGELOG.md) and
+[`src/bluelcms/EXTERNAL_COMMANDS.md`](src/bluelcms/EXTERNAL_COMMANDS.md).
+
 At every launch, BlueLCMS checks for a newer stable GitHub release and offers
 the version selector when one is available. It also prompts to choose a cache
 folder if none is configured.
