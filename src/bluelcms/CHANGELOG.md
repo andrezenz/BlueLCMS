@@ -3,6 +3,12 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev11
+
+- Changed sodium guide offsets to the Na⁺ ion mass.
+- Added positive-direction NH₃, Na⁺, double-loss/adduct, and mixed guides to
+  complement the negative-direction guides.
+
 ## 1.0.2.dev10
 
 - Sorted measurements within each sidebar folder by newest filename/acquisition

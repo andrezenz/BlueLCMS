@@ -92,7 +92,7 @@ class UVPlot(pg.PlotWidget):
 class MassPlot(pg.PlotWidget):
     changed = Signal()
     NH3_MASS = 17.026549101
-    NA_MASS = 22.989769282
+    NA_PLUS_MASS = 22.989220702
 
     def __init__(self, title):
         self.view = MassViewBox()
@@ -189,18 +189,19 @@ class MassPlot(pg.PlotWidget):
         for line in self.reference_lines:
             self.removeItem(line)
         self.reference_lines = []
-        offsets = (
-            ("Reference", 0, 230, .87),
-            ("−NH₃", self.NH3_MASS, 180, .77),
-            ("−Na", self.NA_MASS, 180, .67),
-            ("−2NH₃", 2 * self.NH3_MASS, 95, .57),
-            ("−2Na", 2 * self.NA_MASS, 95, .47),
-            ("−NH₃−Na", self.NH3_MASS + self.NA_MASS, 95, .37),
-        )
+        offsets = [("Reference", 0, 230, .87)]
+        for sign, direction in (("−", -1), ("+", 1)):
+            offsets.extend((
+                (f"{sign}NH₃", direction * self.NH3_MASS, 180, .77),
+                (f"{sign}Na⁺", direction * self.NA_PLUS_MASS, 180, .67),
+                (f"{sign}2NH₃", direction * 2 * self.NH3_MASS, 95, .57),
+                (f"{sign}2Na⁺", direction * 2 * self.NA_PLUS_MASS, 95, .47),
+                (f"{sign}NH₃{sign}Na⁺", direction * (self.NH3_MASS + self.NA_PLUS_MASS), 95, .37),
+            ))
         for name, offset, alpha, label_position in offsets:
             color = (255, 210, 90, alpha)
             line = pg.InfiniteLine(
-                pos=mass - offset, angle=90, movable=False,
+                pos=mass + offset, angle=90, movable=False,
                 pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
                 label=f"{name}\nm/z {{value:.4f}}",
                 labelOpts={"position": label_position, "color": color, "fill": (16, 33, 45, 160)})

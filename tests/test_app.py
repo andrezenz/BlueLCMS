@@ -779,8 +779,9 @@ def test_mass_click_pins_exact_loss_guidelines_with_contrast_tiers():
         QTest.mouseClick(plot.viewport(), Qt.MouseButton.LeftButton, pos=position)
         application.processEvents()
         assert plot.reference_mass == pytest.approx(700, abs=.1)
-        expected_offsets = [0, 17.026549101, 22.989769282, 34.053098202, 45.979538564, 40.016318383]
-        np.testing.assert_allclose([plot.reference_mass - line.value() for line in plot.reference_lines], expected_offsets)
+        offsets = [0, 17.026549101, 22.989220702, 34.053098202, 45.978441404, 40.015769803,
+                   -17.026549101, -22.989220702, -34.053098202, -45.978441404, -40.015769803]
+        np.testing.assert_allclose([plot.reference_mass - line.value() for line in plot.reference_lines], offsets)
         alpha = [line.pen.color().alpha() for line in plot.reference_lines]
         assert plot.cursor_line.pen.color().alpha() > alpha[1] == alpha[2] > alpha[3] == alpha[4] == alpha[5]
         assert all(not line.label.isVisible() for line in plot.reference_lines)
@@ -794,13 +795,16 @@ def test_mass_click_pins_exact_loss_guidelines_with_contrast_tiers():
         assert "−NH₃" in plot.reference_lines[1].label.toPlainText()
         plot.update_reference_hover(plot.view.mapViewToScene(QPointF(698, 50)))
         assert all(not line.label.isVisible() for line in plot.reference_lines)
+        plot.update_reference_hover(plot.view.mapViewToScene(QPointF(700 + plot.NH3_MASS, 50)))
+        assert plot.reference_lines[6].label.isVisible()
+        assert "+NH₃" in plot.reference_lines[6].label.toPlainText()
         plot.move_cursor(plot.view.mapViewToScene(QPointF(690, 50)))
         assert plot.reference_mass == reference
         plot.clear()
         assert all(line in plot.items() for line in plot.reference_lines)
         np.testing.assert_allclose(plot.view.viewRange(), before)
         plot.set_mass_reference(710)
-        assert len(plot.reference_lines) == 6
+        assert len(plot.reference_lines) == 11
         assert plot.reference_lines[0].value() == 710
     finally:
         plot.close()
