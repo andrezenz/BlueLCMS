@@ -1,6 +1,7 @@
 """Folder-organized measurement sidebar with leaf-only selection."""
 
 from pathlib import Path
+import re
 
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QApplication, QStyle, QTreeWidget, QTreeWidgetItem
@@ -11,6 +12,10 @@ class MeasurementItem(QTreeWidgetItem):
 
     def __init__(self, text=""):
         super().__init__([text])
+        self.sort_key = (1, 1, 0, text.casefold())
+
+    def __lt__(self, other):
+        return self.sort_key < other.sort_key
 
     def data(self, *args):
         return super().data(0, args[0]) if len(args) == 1 else super().data(*args)
@@ -41,6 +46,8 @@ class MeasurementTree(QTreeWidget):
         super().__init__()
         self.setHeaderHidden(True)
         self.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        self.setSortingEnabled(True)
+        self.sortItems(0, Qt.SortOrder.AscendingOrder)
         self.roots = ()
         self._folders = {}
         self._items = []
@@ -64,6 +71,7 @@ class MeasurementTree(QTreeWidget):
     def _folder(self, path, label, parent=None):
         if path not in self._folders:
             item = MeasurementItem(label)
+            item.sort_key = (0, path.name.casefold())
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             item.setToolTip(str(path))
             item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
@@ -78,6 +86,14 @@ class MeasurementTree(QTreeWidget):
     def addItem(self, item):
         source = item.data(Qt.ItemDataRole.UserRole)
         anchor = source if isinstance(source, Path) else source.agilent
+        if hasattr(source, "key"):
+            date, sample, replicate = source.key.date, source.key.sample, source.key.replicate
+        else:
+            match = re.match(r"^(\d{4})[_-](\d{1,2})[_-](\d{1,2})", anchor.name)
+            date = "" if match is None else f"{int(match[1]):04d}_{int(match[2]):02d}_{int(match[3]):02d}"
+            sample, replicate = "", 1
+        date_rank = -int(date.replace("_", "")) if date else 0
+        item.sort_key = (1, 0 if date else 1, date_rank, sample.casefold(), replicate, anchor.name.casefold())
         root = next((root for root in self.roots if anchor.is_relative_to(root)), anchor.parent)
         parent = self._folder(root, root.name or str(root))
         directory = root
@@ -86,6 +102,7 @@ class MeasurementTree(QTreeWidget):
             parent = self._folder(directory, part, parent)
         parent.addChild(item)
         self._items.append(item)
+        self.sortItems(0, Qt.SortOrder.AscendingOrder)
 
     def selectedItems(self):
         return [item for item in super().selectedItems() if item.data(Qt.ItemDataRole.UserRole) is not None]

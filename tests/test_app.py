@@ -262,6 +262,24 @@ def test_sidebar_groups_nested_measurements_and_preserves_collapsed_folders(tmp_
         window.close()
 
 
+def test_measurements_within_each_folder_sort_newest_date_first(tmp_path):
+    from bluelcms.sidebar import MeasurementTree
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "remote"
+    folder = root / "batch"
+    folder.mkdir(parents=True)
+    tree = MeasurementTree()
+    tree.set_roots([root])
+    for filename in ("2026_01_03_new.mzML", "2026_10_14_latest.mzML", "2025_12_31_old.mzML", "undated.mzML"):
+        item = QListWidgetItem(filename)
+        item.setData(Qt.ItemDataRole.UserRole, folder / filename)
+        tree.addItem(item)
+    parent = tree.item(0).parent()
+    assert [parent.child(index).text() for index in range(parent.childCount())] == [
+        "2026_10_14_latest.mzML", "2026_01_03_new.mzML", "2025_12_31_old.mzML", "undated.mzML"]
+
+
 def test_cached_only_measurement_keeps_original_folder_hierarchy(tmp_path, monkeypatch):
     import shutil
     from bluelcms.app import cache_metadata

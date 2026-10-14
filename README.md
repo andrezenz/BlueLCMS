@@ -148,7 +148,8 @@ and are cached without being added to the selected plots.
    measurements appear under expandable source/folder nodes in the sidebar;
    `.mzML` and gzip-compressed `.gz` mzML files are supported. Cached-only
    measurements retain their original folder hierarchy. Folder nodes can be
-   expanded or collapsed; select measurement leaves to view data.
+   expanded or collapsed; measurements in each folder sort newest-date-first,
+   with undated entries after dated ones. Select measurement leaves to view data.
    extensions are matched case-insensitively. Use **Refresh file list** after
    adding files.
    Files beginning with `yyyy_mm_dd` sort newest first. Toggle **Settings →

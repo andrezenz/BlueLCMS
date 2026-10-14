@@ -3,6 +3,11 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev10
+
+- Sorted measurements within each sidebar folder by newest filename/acquisition
+  date first, with undated measurements following dated ones.
+
 ## 1.0.2.dev9
 
 - Kept clicked-reference subtraction guide lines visible, but made their labels
