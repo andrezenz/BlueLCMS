@@ -14,7 +14,7 @@ from PySide6.QtGui import QAction, QColor, QDesktopServices, QDoubleValidator, Q
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpinBox,
     QLabel, QListWidget, QMainWindow, QMessageBox, QSplitter,
     QDialog, QDialogButtonBox, QDockWidget, QFormLayout, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
-    QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QVBoxLayout, QWidget, QInputDialog)
+    QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QSlider, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
@@ -64,7 +64,7 @@ def measurement_tooltip(measurement) -> str:
         "Mass spectra available." if spectra == 2 else "Chromatograms only: open the run in Advion Mass Express to enable mass spectra.",
     ]
     return "\n".join(lines)
-from .views import MassPlot, UVPlot, heatmap_levels, loading_overlay, pixel_buckets
+from .views import MassPlot, UVPlot, dad_heatmap_colormap, heatmap_levels, heatmap_reference_span, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
 XIC_COLORS = ("#d49cf0", "#ffd25a", "#5fd8df", "#f3a672", "#8ce0c5")
@@ -441,25 +441,43 @@ class MainWindow(QMainWindow):
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
         self.wavelength.valueChanged.connect(self.draw_uv)
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.update_heatmap_controls); self.mode.currentIndexChanged.connect(self.draw_uv)
-        self.heatmap_sensitivity_label = QLabel("Heatmap sensitivity (%)")
-        self.heatmap_sensitivity = QSpinBox(); self.heatmap_sensitivity.setRange(50, 100)
+        self.heatmap_sensitivity_label = QLabel("Color range (% of maximum)")
+        self.heatmap_sensitivity = QSlider(Qt.Orientation.Horizontal); self.heatmap_sensitivity.setRange(1, 1000)
         self.heatmap_sensitivity.setValue(settings.dad_heatmap_sensitivity())
-        self.heatmap_sensitivity.setToolTip("Upper intensity percentile mapped to the brightest color. Lower values increase contrast for weaker signals.")
+        self.heatmap_sensitivity.setToolTip("Width of the absorption-to-color scale. Lower values make weaker absorption darker; 100% maps the maximum to the darkest color.")
         self.heatmap_sensitivity.valueChanged.connect(self.set_heatmap_sensitivity)
+        self.heatmap_baseline_label = QLabel("Color baseline (% of maximum)")
+        self.heatmap_baseline = QSlider(Qt.Orientation.Horizontal); self.heatmap_baseline.setRange(-100, 100)
+        self.heatmap_baseline.setValue(round(settings.dad_heatmap_baseline() * 100))
+        self.heatmap_baseline.setToolTip("Shifts the absorption value mapped to white. Zero keeps zero absorption white.")
+        self.heatmap_baseline.valueChanged.connect(self.set_heatmap_baseline)
         self.heatmap_palette_label = QLabel("Heatmap color spectrum")
         self.heatmap_palette = QComboBox()
-        for palette in ("viridis", "plasma", "inferno", "magma", "grey"):
-            self.heatmap_palette.addItem(palette.title(), palette)
+        for label, palette in (("Gnuplot PuBu", "gnuplot_pubu"), ("Viridis", "viridis"),
+                               ("Plasma", "plasma"), ("Inferno", "inferno"),
+                               ("Magma", "magma"), ("Greyscale", "grey")):
+            self.heatmap_palette.addItem(label, palette)
         self.heatmap_palette.setCurrentIndex(self.heatmap_palette.findData(settings.dad_heatmap_palette()))
         self.heatmap_palette.currentIndexChanged.connect(self.set_heatmap_palette)
+        self.heatmap_auto = QPushButton("Auto color scale")
+        self.heatmap_auto.clicked.connect(self.reset_heatmap_colors)
         self.heatmap_sensitivity_label.setVisible(False); self.heatmap_sensitivity.setVisible(False)
+        self.heatmap_baseline_label.setVisible(False); self.heatmap_baseline.setVisible(False)
         self.heatmap_palette_label.setVisible(False); self.heatmap_palette.setVisible(False)
+        self.heatmap_auto.setVisible(False)
         self.cache_expiry = QSpinBox(); self.cache_expiry.setRange(0, 365); self.cache_expiry.setValue(settings.cache_expiry_days()); self.cache_expiry.setSuffix(" days")
         self.cache_expiry.setSpecialValueText("Never")
         self.cache_expiry.setToolTip("Cached files are automatically removed after this many days (0 = never expire)")
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
-        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.heatmap_sensitivity_label); controls_layout.addWidget(self.heatmap_sensitivity); controls_layout.addWidget(self.heatmap_palette_label); controls_layout.addWidget(self.heatmap_palette); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
+        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.heatmap_sensitivity_label); controls_layout.addWidget(self.heatmap_sensitivity); controls_layout.addWidget(self.heatmap_baseline_label); controls_layout.addWidget(self.heatmap_baseline); controls_layout.addWidget(self.heatmap_palette_label); controls_layout.addWidget(self.heatmap_palette); controls_layout.addWidget(self.heatmap_auto); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
+        self.heatmap_image = None
+        self.heatmap_source = None
+        self.heatmap_colorbar = None
+        self.heatmap_bounds = None
+        self.heatmap_span = 1.0
+        self.uv.view.heatmap_wheel.connect(self.adjust_heatmap_colorscale)
+        self.uv.view.reset_requested.connect(self.reset_heatmap_zoom)
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
@@ -652,20 +670,108 @@ class MainWindow(QMainWindow):
             settings.set_mass_cursor_snap_unit(unit)
             self.update_cursor_snapping()
 
-    def set_heatmap_sensitivity(self, percentile):
-        settings.set_dad_heatmap_sensitivity(percentile)
-        self.draw_uv()
+    def set_heatmap_sensitivity(self, range_percent):
+        settings.set_dad_heatmap_sensitivity(range_percent)
+        self.update_heatmap_colors()
+
+    def set_heatmap_baseline(self, slider_value):
+        settings.set_dad_heatmap_baseline(slider_value / 100)
+        self.update_heatmap_colors()
+
+    def adjust_heatmap_colorscale(self, delta, shift_baseline):
+        if delta == 0:
+            return
+        steps = max(1, round(abs(delta) / 120))
+        direction = 1 if delta > 0 else -1
+        if shift_baseline:
+            # Shift up moves the white point toward greater absorption.
+            self.heatmap_baseline.setValue(self.heatmap_baseline.value() + direction * steps)
+        else:
+            # A narrower range increases sensitivity without changing the baseline.
+            value = self.heatmap_sensitivity.value()
+            factor = .9 ** (direction * steps)
+            new_value = round(value * factor)
+            if new_value == value:
+                new_value = value - direction
+            self.heatmap_sensitivity.setValue(max(1, min(1000, new_value)))
 
     def set_heatmap_palette(self, index):
         palette = self.heatmap_palette.itemData(index)
         if palette:
             settings.set_dad_heatmap_palette(palette)
-            self.draw_uv()
+            self.update_heatmap_colors()
+
+    def update_heatmap_colors(self):
+        self.heatmap_sensitivity_label.setText(f"Color range: {self.heatmap_sensitivity.value()}% of maximum")
+        self.heatmap_baseline_label.setText(f"Color baseline: {self.heatmap_baseline.value():+d}% of maximum")
+        if self.heatmap_image is None or self.mode.currentText() != "DAD heatmap":
+            return
+        baseline = settings.dad_heatmap_baseline() * self.heatmap_span
+        levels = heatmap_levels(None, settings.dad_heatmap_sensitivity(), baseline, reference_span=self.heatmap_span)
+        color_map = dad_heatmap_colormap(settings.dad_heatmap_palette())
+        self.heatmap_image.setColorMap(color_map)
+        self.heatmap_image.setLevels(levels)
+        if self.heatmap_colorbar is None:
+            self.heatmap_colorbar = pg.ColorBarItem(values=levels, colorMap=color_map,
+                label="UV intensity", interactive=False, colorMapMenu=False)
+            self.heatmap_colorbar.setImageItem(self.heatmap_image, insert_in=self.uv.plotItem)
+        else:
+            if not self.heatmap_colorbar.img_list or self.heatmap_colorbar.img_list[0]() is not self.heatmap_image:
+                self.heatmap_colorbar.setImageItem(self.heatmap_image)
+            self.heatmap_colorbar.setColorMap(color_map)
+            self.heatmap_colorbar.setLevels(levels)
+        self.heatmap_colorbar.show()
+        self.uv.setTitle(f"DAD heatmap — UV scale {levels[0]:.4g} to {levels[1]:.4g}; drag to zoom")
+
+    def reset_heatmap_zoom(self):
+        if self.mode.currentText() == "DAD heatmap" and self.heatmap_bounds is not None:
+            self.uv.view.setRange(rect=self.heatmap_bounds, padding=0)
+
+    def reset_heatmap_colors(self):
+        self.heatmap_sensitivity.setValue(100)
+        self.heatmap_baseline.setValue(0)
+        self.update_heatmap_colors()
+
+    def draw_dad_heatmap(self):
+        self.uv.view.heatmap_mode = True
+        self.uv.tic_view.hide()
+        self.uv.hideAxis("right")
+        self.uv.region.hide()
+        if not self.runs:
+            self.uv.clear()
+            self.heatmap_image = None
+            self.heatmap_source = None
+            if self.heatmap_colorbar is not None:
+                self.heatmap_colorbar.hide()
+            self.uv.setTitle("DAD heatmap — loading complete DAD data…")
+            return
+        run = next(iter(self.runs.values()))
+        if self.heatmap_source is not run or self.heatmap_image not in self.uv.plotItem.items:
+            self.uv.clear()
+            times, waves, matrix = run.heatmap()
+            if not len(times) or not len(waves):
+                self.heatmap_image = None
+                self.heatmap_source = None
+                if self.heatmap_colorbar is not None:
+                    self.heatmap_colorbar.hide()
+                self.uv.setTitle("DAD heatmap — no UV data in this measurement")
+                return
+            self.heatmap_span = heatmap_reference_span(matrix)
+            self.heatmap_source = run
+            self.heatmap_image = pg.ImageItem(matrix.T, autoLevels=False, axisOrder="row-major")
+            self.heatmap_bounds = QRectF(float(times.min()), float(waves.min()), float(np.ptp(times) or 1), float(np.ptp(waves) or 1))
+            self.heatmap_image.setRect(self.heatmap_bounds)
+            self.uv.addItem(self.heatmap_image)
+            self.uv.setLabel("left", "Wavelength", units="nm")
+            self.reset_heatmap_zoom()
+        self.update_heatmap_colors()
 
     def update_heatmap_controls(self, *_):
         visible = self.mode.currentText() == "DAD heatmap"
+        self.uv.view.heatmap_mode = visible
         for widget in (self.heatmap_sensitivity_label, self.heatmap_sensitivity,
-                       self.heatmap_palette_label, self.heatmap_palette):
+                       self.heatmap_baseline_label, self.heatmap_baseline,
+                       self.heatmap_palette_label, self.heatmap_palette, self.heatmap_auto):
             widget.setVisible(visible)
 
     def update_cursor_snapping(self):
@@ -1415,6 +1521,17 @@ class MainWindow(QMainWindow):
             if hasattr(plot, "loading") and plot.loading.isVisible(): plot.loading.setText("Loading" + "." * self.loading_phase)
 
     def draw_uv(self):
+        if self.mode.currentText() == "DAD heatmap":
+            self.draw_dad_heatmap()
+            return
+        self.uv.view.heatmap_mode = False
+        self.uv.heatmap_zoom_preview.hide()
+        self.uv.tic_view.show()
+        if self.heatmap_colorbar is not None:
+            self.heatmap_colorbar.hide()
+        self.heatmap_image = None
+        self.heatmap_source = None
+        self.heatmap_bounds = None
         loading = self.loading_timer.isActive()
         previous_region = self.uv.region.getRegion()
         preserve_region = self.uv.region.isVisible() and self.last_uv_bounds is not None and previous_region != self.last_uv_bounds
@@ -1429,21 +1546,6 @@ class MainWindow(QMainWindow):
             loading_overlay(self.uv, True)
         if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
         target = self.wavelength.value()
-        if self.mode.currentText() == "DAD heatmap":
-            if not self.runs:
-                self.uv.setTitle("DAD heatmap — loading complete DAD data…")
-                return
-            run = next(iter(self.runs.values())); times, waves, matrix = run.heatmap()
-            if len(times):
-                image = pg.ImageItem(matrix.T, levels=heatmap_levels(matrix, settings.dad_heatmap_sensitivity()))
-                palette = settings.dad_heatmap_palette()
-                lookup = (np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
-                          if palette == "grey" else pg.colormap.get(palette).getLookupTable(nPts=256, alpha=False))
-                image.setLookupTable(lookup)
-                image.setRect(QRectF(times.min(), waves.min(), np.ptp(times) or 1, np.ptp(waves) or 1))
-                self.uv.addItem(image); self.uv.setLabel("left", "Wavelength", units="nm")
-                self.uv.setTitle(f"DAD heatmap (first selected file; upper {settings.dad_heatmap_sensitivity()} percentile)")
-            return
         all_times = []
         tic_by_polarity = {"+": {}, "-": {}}
         extracted = {mass: {"+": {}, "-": {}} for mass in enabled_xics}

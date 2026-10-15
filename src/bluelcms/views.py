@@ -2,8 +2,9 @@
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtWidgets import QMenu
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtWidgets import QGraphicsRectItem, QMenu
 
 
 def pixel_buckets(x, y, minimum, maximum, pixels):
@@ -25,19 +26,39 @@ def positive_zoom_range(current_upper, zoom_in):
     return 0, max(np.finfo(float).eps, current_upper * factor)
 
 
-def heatmap_levels(matrix, sensitivity_percentile):
-    """Keep the lower data range and clip highlights at a chosen percentile."""
+def heatmap_reference_span(matrix):
     values = np.asarray(matrix, dtype=float)
     finite = values[np.isfinite(values)]
     if not len(finite):
-        return 0.0, 1.0
-    lower = float(finite.min())
-    upper = float(np.percentile(finite, sensitivity_percentile))
-    if upper <= lower:
-        upper = float(finite.max())
-    if upper <= lower:
-        upper = lower + np.finfo(float).eps
-    return lower, upper
+        return 1.0
+    maximum = float(finite.max())
+    return max(maximum if maximum > 0 else float(np.abs(finite).max()), 1e-12)
+
+
+def heatmap_levels(matrix, range_percent, baseline=0.0, reference_span=None):
+    """A continuous color-range width plus an independent absorption offset."""
+    span = heatmap_reference_span(matrix) if reference_span is None else reference_span
+    width = max(span * range_percent / 100, 1e-12)
+    return float(baseline), float(baseline) + width
+
+
+def dad_heatmap_colormap(palette):
+    """Return the DAD color map; Gnuplot PuBu maps zero to white."""
+    if palette == "gnuplot_pubu":
+        colors = np.asarray([
+            (255, 255, 255), (236, 231, 242), (208, 209, 230),
+            (166, 189, 219), (116, 169, 207), (54, 144, 192),
+            (5, 112, 176), (4, 90, 141), (2, 56, 88),
+        ], dtype=np.uint8)
+        return pg.ColorMap(np.linspace(0, 1, len(colors)), colors)
+    if palette == "grey":
+        values = np.asarray([[0, 0, 0], [255, 255, 255]], dtype=np.uint8)
+        return pg.ColorMap([0, 1], values)
+    return pg.colormap.get(palette)
+
+
+def dad_heatmap_lut(palette, count=256):
+    return dad_heatmap_colormap(palette).getLookupTable(nPts=count, alpha=False)
 
 
 class ResetViewBox(pg.ViewBox):
@@ -53,12 +74,33 @@ class ResetViewBox(pg.ViewBox):
 
 class RegionViewBox(ResetViewBox):
     region_dragged = Signal(float, float)
+    heatmap_zoom_dragged = Signal(float, float, float, float)
+    heatmap_zoom_finished = Signal(float, float, float, float)
+    heatmap_wheel = Signal(int, bool)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.heatmap_mode = False
+
+    def wheelEvent(self, event, axis=None):
+        if self.heatmap_mode:
+            event.accept()
+            self.heatmap_wheel.emit(event.delta(), bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            return
+        super().wheelEvent(event, axis)
 
     def mouseDragEvent(self, event, axis=None):
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
-            self.region_dragged.emit(
-                self.mapToView(event.buttonDownPos()).x(), self.mapToView(event.pos()).x())
+            start = self.mapToView(event.buttonDownPos())
+            end = self.mapToView(event.pos())
+            if self.heatmap_mode:
+                if event.isFinish():
+                    self.heatmap_zoom_finished.emit(start.x(), start.y(), end.x(), end.y())
+                else:
+                    self.heatmap_zoom_dragged.emit(start.x(), start.y(), end.x(), end.y())
+            else:
+                self.region_dragged.emit(start.x(), end.x())
         else:
             super().mouseDragEvent(event, axis)
 
@@ -68,6 +110,15 @@ class UVPlot(pg.PlotWidget):
     def __init__(self):
         self.view = RegionViewBox()
         super().__init__(viewBox=self.view)
+        self.heatmap_zoom_preview = QGraphicsRectItem()
+        self.heatmap_zoom_preview.setPen(QPen(QColor("#e7a83e"), 1.5, Qt.PenStyle.DashLine))
+        self.heatmap_zoom_preview.setBrush(QBrush(QColor(231, 168, 62, 45)))
+        self.heatmap_zoom_preview.setZValue(30)
+        self.heatmap_zoom_preview.hide()
+        self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
+        self.view.heatmap_zoom_dragged.connect(self.preview_heatmap_zoom)
+        self.view.heatmap_zoom_finished.connect(self.finish_heatmap_zoom)
+        self.clear = self.clear_uv
         self.setLabel("bottom", "Retention time", units="min")
         self.setLabel("left", "UV signal")
         self.showAxis("right")
@@ -87,6 +138,21 @@ class UVPlot(pg.PlotWidget):
         self.region.hide()
         self.view.region_dragged.connect(lambda a, b: self.region.setRegion((min(a, b), max(a, b))))
         self.view.reset_requested.connect(self.enableAutoRange)
+
+    def clear_uv(self):
+        self.plotItem.clear()
+        self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
+
+    def preview_heatmap_zoom(self, x1, y1, x2, y2):
+        self.heatmap_zoom_preview.setRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
+        self.heatmap_zoom_preview.show()
+
+    def finish_heatmap_zoom(self, x1, y1, x2, y2):
+        self.heatmap_zoom_preview.hide()
+        if abs(x2 - x1) < 1e-9 or abs(y2 - y1) < 1e-9:
+            return
+        self.setXRange(min(x1, x2), max(x1, x2), padding=0)
+        self.setYRange(min(y1, y2), max(y1, y2), padding=0)
 
     def update_tic_view(self):
         self.tic_view.setGeometry(self.getViewBox().sceneBoundingRect())

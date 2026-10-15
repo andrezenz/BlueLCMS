@@ -3,6 +3,10 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev23
+
+- Added adjustable DAD heatmap color range and offset controls, plus mouse-wheel and reset support.
+
 ## 1.0.2.dev22
 
 - Removed the redundant mounted-remote folder action; **Manage mzML locations**

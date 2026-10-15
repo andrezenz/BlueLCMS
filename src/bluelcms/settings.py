@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import math
 
 from PySide6.QtCore import QSettings
 
@@ -148,24 +149,34 @@ def extracted_tics() -> list[dict]:
 
 
 def dad_heatmap_sensitivity() -> int:
-    return min(100, max(50, settings().value("dad_heatmap_sensitivity", 99, type=int)))
+    return min(1000, max(1, settings().value("dad_heatmap_range_percent", 100, type=int)))
 
 
-def set_dad_heatmap_sensitivity(percentile: int) -> None:
-    if not 50 <= percentile <= 100:
-        raise ValueError("Heatmap sensitivity percentile must be between 50 and 100.")
-    settings().setValue("dad_heatmap_sensitivity", percentile)
+def set_dad_heatmap_sensitivity(range_percent: int) -> None:
+    if not 1 <= range_percent <= 1000:
+        raise ValueError("Heatmap color range must be between 1 and 1000 percent.")
+    settings().setValue("dad_heatmap_range_percent", range_percent)
 
 
 def dad_heatmap_palette() -> str:
-    palette = settings().value("dad_heatmap_palette", "viridis", type=str)
-    return palette if palette in ("viridis", "plasma", "inferno", "magma", "grey") else "viridis"
+    palette = settings().value("dad_heatmap_palette", "gnuplot_pubu", type=str)
+    return palette if palette in ("gnuplot_pubu", "viridis", "plasma", "inferno", "magma", "grey") else "gnuplot_pubu"
 
 
 def set_dad_heatmap_palette(palette: str) -> None:
-    if palette not in ("viridis", "plasma", "inferno", "magma", "grey"):
+    if palette not in ("gnuplot_pubu", "viridis", "plasma", "inferno", "magma", "grey"):
         raise ValueError(f"Unsupported DAD heatmap palette: {palette}")
     settings().setValue("dad_heatmap_palette", palette)
+
+
+def dad_heatmap_baseline() -> float:
+    return settings().value("dad_heatmap_baseline", 0.0, type=float)
+
+
+def set_dad_heatmap_baseline(baseline: float) -> None:
+    if not math.isfinite(baseline):
+        raise ValueError("Heatmap baseline must be finite.")
+    settings().setValue("dad_heatmap_baseline", baseline)
 
 
 def last_changelog_version() -> str:
