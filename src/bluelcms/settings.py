@@ -97,8 +97,8 @@ def set_snap_mass_cursor(enabled: bool) -> None:
 
 
 def mass_cursor_snap_unit() -> str:
-    unit = settings().value("mass_cursor_snap_unit", "mz", type=str)
-    return unit if unit in ("mz", "pixels") else "mz"
+    unit = settings().value("mass_cursor_snap_unit", "pixels", type=str)
+    return unit if unit in ("mz", "pixels") else "pixels"
 
 
 def set_mass_cursor_snap_unit(unit: str) -> None:
@@ -145,6 +145,35 @@ def extracted_tics() -> list[dict]:
         except (TypeError, ValueError, KeyError):
             continue
     return result
+
+
+def dad_heatmap_sensitivity() -> int:
+    return min(100, max(50, settings().value("dad_heatmap_sensitivity", 99, type=int)))
+
+
+def set_dad_heatmap_sensitivity(percentile: int) -> None:
+    if not 50 <= percentile <= 100:
+        raise ValueError("Heatmap sensitivity percentile must be between 50 and 100.")
+    settings().setValue("dad_heatmap_sensitivity", percentile)
+
+
+def dad_heatmap_palette() -> str:
+    palette = settings().value("dad_heatmap_palette", "viridis", type=str)
+    return palette if palette in ("viridis", "plasma", "inferno", "magma", "grey") else "viridis"
+
+
+def set_dad_heatmap_palette(palette: str) -> None:
+    if palette not in ("viridis", "plasma", "inferno", "magma", "grey"):
+        raise ValueError(f"Unsupported DAD heatmap palette: {palette}")
+    settings().setValue("dad_heatmap_palette", palette)
+
+
+def last_changelog_version() -> str:
+    return settings().value("last_changelog_version", "", type=str)
+
+
+def set_last_changelog_version(version: str) -> None:
+    settings().setValue("last_changelog_version", version)
 
 
 def set_extracted_tics(entries: list[dict]) -> None:

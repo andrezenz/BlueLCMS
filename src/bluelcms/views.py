@@ -25,6 +25,21 @@ def positive_zoom_range(current_upper, zoom_in):
     return 0, max(np.finfo(float).eps, current_upper * factor)
 
 
+def heatmap_levels(matrix, sensitivity_percentile):
+    """Keep the lower data range and clip highlights at a chosen percentile."""
+    values = np.asarray(matrix, dtype=float)
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return 0.0, 1.0
+    lower = float(finite.min())
+    upper = float(np.percentile(finite, sensitivity_percentile))
+    if upper <= lower:
+        upper = float(finite.max())
+    if upper <= lower:
+        upper = lower + np.finfo(float).eps
+    return lower, upper
+
+
 class ResetViewBox(pg.ViewBox):
     reset_requested = Signal()
 

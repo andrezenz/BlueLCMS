@@ -342,6 +342,7 @@ def test_startup_prompts_for_missing_cache_folder(tmp_path, monkeypatch):
     application = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     monkeypatch.setattr(settings, "settings", lambda: preferences)
+    settings.set_last_changelog_version(QApplication.applicationVersion())
     window = MainWindow()
     calls = []
     monkeypatch.setattr(window, "check_packaged_release", lambda: calls.append("stable check"))
@@ -356,6 +357,60 @@ def test_startup_prompts_for_missing_cache_folder(tmp_path, monkeypatch):
         assert calls == ["stable check"]
     finally:
         window.close()
+
+
+def test_startup_shows_changelog_once_for_each_new_app_version(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    shown = []
+    monkeypatch.setattr(window, "show_changelog", lambda: shown.append(QApplication.applicationVersion()))
+    try:
+        application.setApplicationVersion("1.0.2.dev21")
+        assert window.show_changelog_for_new_version()
+        assert not window.show_changelog_for_new_version()
+        application.setApplicationVersion("1.0.2.dev22")
+        assert window.show_changelog_for_new_version()
+        assert shown == ["1.0.2.dev21", "1.0.2.dev22"]
+    finally:
+        window.close()
+
+
+def test_dad_heatmap_sensitivity_palette_and_persistence(tmp_path, monkeypatch):
+    from bluelcms.mzml import DADScan, Run
+    from bluelcms.views import heatmap_levels
+
+    application = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    matrix = np.array([[0., 1.], [2., 100.]])
+    assert heatmap_levels(matrix, 75)[1] == pytest.approx(26.5)
+    window = MainWindow()
+    try:
+        window.runs["heatmap"] = Run((
+            DADScan(0., np.array([250., 254.]), np.array([0., 1.])),
+            DADScan(1., np.array([250., 254.]), np.array([2., 100.])),
+        ), ())
+        window.mode.setCurrentText("DAD heatmap")
+        assert not window.heatmap_sensitivity.isHidden()
+        assert not window.heatmap_palette.isHidden()
+        window.heatmap_sensitivity.setValue(75)
+        window.heatmap_palette.setCurrentIndex(window.heatmap_palette.findData("inferno"))
+        image = next(item for item in window.uv.items() if isinstance(item, pg.ImageItem))
+        assert image.getLevels()[1] == pytest.approx(26.5)
+        assert settings.dad_heatmap_palette() == "inferno"
+        window.heatmap_palette.setCurrentIndex(window.heatmap_palette.findData("grey"))
+        image = next(item for item in window.uv.items() if isinstance(item, pg.ImageItem))
+        assert np.asarray(image.lut).shape[1] == 3
+        window.close()
+        reopened = MainWindow()
+        assert reopened.heatmap_sensitivity.value() == 75
+        assert reopened.heatmap_palette.currentData() == "grey"
+        reopened.close()
+    finally:
+        if window.isVisible():
+            window.close()
 
 
 class FakePausableLoad:
@@ -926,24 +981,30 @@ def test_pixel_snap_window_narrows_in_mz_when_zooming_in():
 
 
 def test_mass_cursor_snapping_preferences_persist(tmp_path, monkeypatch):
-    from bluelcms import app as app_module
+    from bluelcms.app import MassCursorSnapDialog
+    from PySide6.QtWidgets import QDialog
 
     application = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     window = MainWindow()
     try:
-        assert settings.mass_cursor_snap_range() == 5
+        assert settings.mass_cursor_snap_unit() == "pixels"
+        assert settings.mass_cursor_snap_range() == 10
         window.snap_mass_cursor.setChecked(True)
         assert window.positive.snap_enabled and window.negative.snap_enabled
-        monkeypatch.setattr(app_module.QInputDialog, "getDouble", lambda *args: (1.5, True))
-        window.choose_mass_cursor_snap_range()
-        assert window.positive.snap_range == window.negative.snap_range == 1.5
-        monkeypatch.setattr(app_module.QInputDialog, "getItem", lambda *args: ("screen pixels", True))
-        window.choose_mass_cursor_snap_unit()
-        assert window.positive.snap_unit == window.negative.snap_unit == "pixels"
-        monkeypatch.setattr(app_module.QInputDialog, "getDouble", lambda *args: (12, True))
-        window.choose_mass_cursor_snap_range()
+        dialogs = []
+        def accept(dialog):
+            dialogs.append(dialog)
+            dialog.units.setCurrentIndex(dialog.units.findData("mz"))
+            dialog.range.setValue(1.5)
+            dialog.units.setCurrentIndex(dialog.units.findData("pixels"))
+            dialog.range.setValue(12)
+            return QDialog.DialogCode.Accepted
+        monkeypatch.setattr(MassCursorSnapDialog, "exec", accept)
+        window.configure_mass_cursor_snapping()
+        assert dialogs[0].units.currentData() == "pixels"
+        assert window.positive.snap_range == window.negative.snap_range == 12
     finally:
         window.close()
     reopened = MainWindow()
@@ -953,6 +1014,11 @@ def test_mass_cursor_snapping_preferences_persist(tmp_path, monkeypatch):
         assert reopened.positive.snap_range == reopened.negative.snap_range == 12
         assert reopened.positive.snap_unit == reopened.negative.snap_unit == "pixels"
         assert settings.mass_cursor_snap_range("mz") == 1.5
+        menu = next(action.menu() for action in reopened.menuBar().actions() if action.text() == "Settings")
+        menu_texts = [action.text() for action in menu.actions()]
+        assert "Choose mounted remote folder…" not in menu_texts
+        assert "Mass cursor snapping…" in menu_texts
+        assert "Mass cursor snap units…" not in menu_texts
     finally:
         reopened.close()
 

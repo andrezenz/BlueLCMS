@@ -18,6 +18,7 @@ Use **About → Changelog…** for the bundled version history and
 are available offline. The maintained documents are
 [`src/bluelcms/CHANGELOG.md`](src/bluelcms/CHANGELOG.md) and
 [`src/bluelcms/EXTERNAL_COMMANDS.md`](src/bluelcms/EXTERNAL_COMMANDS.md).
+The changelog opens once on the first launch of each app version.
 
 At every launch, BlueLCMS checks for a newer stable GitHub release and offers
 the version selector when one is available. It also prompts to choose a cache
@@ -179,7 +180,10 @@ and are cached without being added to the selected plots.
   color rather than overdrawn, so every selected measurement remains visible.
 - Change **Wavelength** to redraw all selected DAD traces without rereading the
   source files. Choose **DAD heatmap** to view wavelength versus retention time
-  for the first selected run.
+  for the first selected run. In heatmap mode, **Heatmap sensitivity (%)** sets
+  the upper intensity percentile mapped to the brightest color; lower values
+  increase contrast for weaker signals. **Heatmap color spectrum** offers
+  Viridis, Plasma, Inferno, Magma, and Greyscale. Both settings persist.
 - Positive and negative histograms are stacked and share their m/z navigation.
   When zoomed out, all 0.1 Th source bins that fall into one screen pixel are
   summed into that pixel's bar. Zooming back in restores the source resolution.
@@ -203,10 +207,9 @@ vendor-specific external DAD files.
 
 1. Connect to `afp://server/share` in your system file manager and authenticate
    there. Keep the share mounted while using ⌊Blue⌋ LCMS.
-2. In ⌊Blue⌋ LCMS, choose **Settings → Choose mounted remote folder…**. Open the
-   share (usually named `afp-volume:host=…,volume=…`) and select the directory
-   containing the mzML files. The picker exposes the GVFS mount directory even
-   when the native folder dialog does not show network locations.
+2. In ⌊Blue⌋ LCMS, choose **Settings → Manage mzML locations…** and add the
+   mounted share folder (usually named `afp-volume:host=…,volume=…`) with **Add
+   folder…**. The locations dialog manages mounted and local folders together.
 3. Select a file as usual. Directory listing and mzML loading run in background
    workers. After a disconnect, reconnect in the file manager and use
    **Settings → Refresh file list**. If the mount path changes, reselect it.

@@ -11,13 +11,13 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRectF, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDoubleValidator, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpinBox,
     QLabel, QListWidget, QMainWindow, QMessageBox, QSplitter,
-    QDialog, QDialogButtonBox, QDockWidget, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
+    QDialog, QDialogButtonBox, QDockWidget, QFormLayout, QHBoxLayout, QPushButton, QProgressBar, QSpinBox, QStyle,
     QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
-from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path, remote_mount_roots
+from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import updater
 from . import releases
@@ -64,7 +64,7 @@ def measurement_tooltip(measurement) -> str:
         "Mass spectra available." if spectra == 2 else "Chromatograms only: open the run in Advion Mass Express to enable mass spectra.",
     ]
     return "\n".join(lines)
-from .views import MassPlot, UVPlot, loading_overlay, pixel_buckets
+from .views import MassPlot, UVPlot, heatmap_levels, loading_overlay, pixel_buckets
 
 COLORS = ("#48a9ef", "#f3ae57", "#c17fe8", "#61c98b", "#ed6f8c", "#e3cf4f")
 XIC_COLORS = ("#d49cf0", "#ffd25a", "#5fd8df", "#f3a672", "#8ce0c5")
@@ -285,6 +285,45 @@ class LocationsDialog(QDialog):
         return [Path(self.locations.item(index).text()) for index in range(self.locations.count())]
 
 
+class MassCursorSnapDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mass cursor snapping")
+        self.units = QComboBox(self)
+        self.units.addItem("m/z", "mz")
+        self.units.addItem("Screen pixels", "pixels")
+        self.range = QDoubleSpinBox(self)
+        self.range.setRange(.001, 1000)
+        self.range.setDecimals(3)
+        self.range.setSingleStep(.5)
+        unit = settings.mass_cursor_snap_unit()
+        self.current_unit = unit
+        self.ranges = {name: settings.mass_cursor_snap_range(name) for name in ("mz", "pixels")}
+        self.units.setCurrentIndex(self.units.findData(unit))
+        self.range.setValue(self.ranges[unit])
+        self.units.currentIndexChanged.connect(self.change_units)
+        self.range.setSuffix(" m/z" if unit == "mz" else " px")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("Snap units", self.units)
+        form.addRow("Highest peak within ±", self.range)
+        layout.addLayout(form); layout.addWidget(buttons)
+
+    def change_units(self, index):
+        self.ranges[self.current_unit] = self.range.value()
+        unit = self.units.itemData(index)
+        self.current_unit = unit
+        self.range.setValue(self.ranges[unit])
+        self.range.setSuffix(" m/z" if unit == "mz" else " px")
+
+    def selected_settings(self):
+        unit = self.units.currentData()
+        self.ranges[unit] = self.range.value()
+        return unit, self.range.value(), self.ranges.copy()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -357,7 +396,6 @@ class MainWindow(QMainWindow):
             self.create_xic_button(entry["mass"], entry["radius"], entry["enabled"])
         menu = self.menuBar().addMenu("Settings")
         for text, slot in (("Manage mzML locations…", self.choose_folder),
-                           ("Choose mounted remote folder…", self.choose_remote_folder),
                            ("Choose local cache folder…", self.choose_cache_folder),
                            ("Open debug terminal…", self.open_debug_terminal),
                            ("Refresh file list", self.refresh_files)):
@@ -384,12 +422,9 @@ class MainWindow(QMainWindow):
         self.snap_mass_cursor.setChecked(settings.snap_mass_cursor())
         self.snap_mass_cursor.toggled.connect(self.set_snap_mass_cursor)
         menu.addAction(self.snap_mass_cursor)
-        snap_range = QAction("Mass cursor snap range…", self)
-        snap_range.triggered.connect(self.choose_mass_cursor_snap_range)
-        menu.addAction(snap_range)
-        snap_units = QAction("Mass cursor snap units…", self)
-        snap_units.triggered.connect(self.choose_mass_cursor_snap_unit)
-        menu.addAction(snap_units)
+        snap_options = QAction("Mass cursor snapping…", self)
+        snap_options.triggered.connect(self.configure_mass_cursor_snapping)
+        menu.addAction(snap_options)
         update_menu = self.menuBar().addMenu("Update")
         update_actions = (("Update version…", self.select_release),)
         for text, slot in update_actions:
@@ -405,12 +440,25 @@ class MainWindow(QMainWindow):
         self.folder_label.setWordWrap(True)
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
         self.wavelength.valueChanged.connect(self.draw_uv)
-        self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.draw_uv)
+        self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.update_heatmap_controls); self.mode.currentIndexChanged.connect(self.draw_uv)
+        self.heatmap_sensitivity_label = QLabel("Heatmap sensitivity (%)")
+        self.heatmap_sensitivity = QSpinBox(); self.heatmap_sensitivity.setRange(50, 100)
+        self.heatmap_sensitivity.setValue(settings.dad_heatmap_sensitivity())
+        self.heatmap_sensitivity.setToolTip("Upper intensity percentile mapped to the brightest color. Lower values increase contrast for weaker signals.")
+        self.heatmap_sensitivity.valueChanged.connect(self.set_heatmap_sensitivity)
+        self.heatmap_palette_label = QLabel("Heatmap color spectrum")
+        self.heatmap_palette = QComboBox()
+        for palette in ("viridis", "plasma", "inferno", "magma", "grey"):
+            self.heatmap_palette.addItem(palette.title(), palette)
+        self.heatmap_palette.setCurrentIndex(self.heatmap_palette.findData(settings.dad_heatmap_palette()))
+        self.heatmap_palette.currentIndexChanged.connect(self.set_heatmap_palette)
+        self.heatmap_sensitivity_label.setVisible(False); self.heatmap_sensitivity.setVisible(False)
+        self.heatmap_palette_label.setVisible(False); self.heatmap_palette.setVisible(False)
         self.cache_expiry = QSpinBox(); self.cache_expiry.setRange(0, 365); self.cache_expiry.setValue(settings.cache_expiry_days()); self.cache_expiry.setSuffix(" days")
         self.cache_expiry.setSpecialValueText("Never")
         self.cache_expiry.setToolTip("Cached files are automatically removed after this many days (0 = never expire)")
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
-        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
+        controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.heatmap_sensitivity_label); controls_layout.addWidget(self.heatmap_sensitivity); controls_layout.addWidget(self.heatmap_palette_label); controls_layout.addWidget(self.heatmap_palette); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
@@ -463,19 +511,6 @@ class MainWindow(QMainWindow):
         dialog = LocationsDialog(self.folders, self)
         if dialog.exec():
             self.folders = dialog.selected_locations()
-            self.folder = self.folders[0] if self.folders else None
-            settings.set_data_folders(self.folders)
-            self.refresh_files()
-
-    def choose_remote_folder(self):
-        roots = remote_mount_roots()
-        if not roots:
-            QMessageBox.information(self, "Mounted remote folders", "Mount the AFP share in your system file manager first, then use this action. For /mnt or /media mounts, use the normal folder chooser.")
-            return
-        dialog = QFileDialog(self, "Choose a mounted remote folder"); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setSidebarUrls([QUrl.fromLocalFile(str(x)) for x in [Path.home(), *roots]]); dialog.setDirectory(str(roots[0]))
-        if dialog.exec() and dialog.selectedFiles():
-            folder = Path(dialog.selectedFiles()[0])
-            self.folders = [*self.folders, folder] if folder not in self.folders else self.folders
             self.folder = self.folders[0] if self.folders else None
             settings.set_data_folders(self.folders)
             self.refresh_files()
@@ -608,23 +643,30 @@ class MainWindow(QMainWindow):
         settings.set_snap_mass_cursor(enabled)
         self.update_cursor_snapping()
 
-    def choose_mass_cursor_snap_range(self):
-        unit = settings.mass_cursor_snap_unit()
-        unit_label = "m/z" if unit == "mz" else "screen pixels"
-        radius, accepted = QInputDialog.getDouble(self, "Mass cursor snap range",
-            f"Search for the highest peak within ± this many {unit_label}:",
-            settings.mass_cursor_snap_range(unit), 0.1 if unit == "pixels" else 0.001, 1000, 3)
-        if accepted:
-            settings.set_mass_cursor_snap_range(radius, unit)
+    def configure_mass_cursor_snapping(self):
+        dialog = MassCursorSnapDialog(self)
+        if dialog.exec():
+            unit, _, ranges = dialog.selected_settings()
+            settings.set_mass_cursor_snap_range(ranges["mz"], "mz")
+            settings.set_mass_cursor_snap_range(ranges["pixels"], "pixels")
+            settings.set_mass_cursor_snap_unit(unit)
             self.update_cursor_snapping()
 
-    def choose_mass_cursor_snap_unit(self):
-        options = ("m/z", "screen pixels")
-        current = 0 if settings.mass_cursor_snap_unit() == "mz" else 1
-        option, accepted = QInputDialog.getItem(self, "Mass cursor snap units", "Snap window units:", options, current, False)
-        if accepted:
-            settings.set_mass_cursor_snap_unit("mz" if option == "m/z" else "pixels")
-            self.update_cursor_snapping()
+    def set_heatmap_sensitivity(self, percentile):
+        settings.set_dad_heatmap_sensitivity(percentile)
+        self.draw_uv()
+
+    def set_heatmap_palette(self, index):
+        palette = self.heatmap_palette.itemData(index)
+        if palette:
+            settings.set_dad_heatmap_palette(palette)
+            self.draw_uv()
+
+    def update_heatmap_controls(self, *_):
+        visible = self.mode.currentText() == "DAD heatmap"
+        for widget in (self.heatmap_sensitivity_label, self.heatmap_sensitivity,
+                       self.heatmap_palette_label, self.heatmap_palette):
+            widget.setVisible(visible)
 
     def update_cursor_snapping(self):
         for plot in (self.positive, self.negative):
@@ -755,12 +797,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Could not register Linux file thumbnails: {registration_error}")
         elif registration_error:
             self.statusBar().showMessage("BlueLCMS thumbnails registered; restart Files to clear old thumbnail failures.", 15000)
+        self.show_changelog_for_new_version()
         self.check_packaged_release()
         if settings.cache_folder() is None:
             answer = QMessageBox.question(self, "No cache folder configured",
                 "No cache folder is configured. Choose a folder to enable local caching and offline access to measurements.\n\nChoose a cache folder now?")
             if answer == QMessageBox.StandardButton.Yes:
                 self.choose_cache_folder()
+
+    def show_changelog_for_new_version(self):
+        version = QApplication.applicationVersion()
+        if not version or settings.last_changelog_version() == version:
+            return False
+        settings.set_last_changelog_version(version)
+        self.show_changelog()
+        return True
 
     def check_packaged_release(self, manual=False):
         self.submit(0, releases.release, lambda token, result, error: self.packaged_release_ready(token, result, error, manual), "stable")
@@ -1384,7 +1435,14 @@ class MainWindow(QMainWindow):
                 return
             run = next(iter(self.runs.values())); times, waves, matrix = run.heatmap()
             if len(times):
-                image = pg.ImageItem(matrix.T); image.setRect(QRectF(times.min(), waves.min(), np.ptp(times) or 1, np.ptp(waves) or 1)); self.uv.addItem(image); self.uv.setLabel("left", "Wavelength", units="nm"); self.uv.setTitle("DAD heatmap (first selected file)")
+                image = pg.ImageItem(matrix.T, levels=heatmap_levels(matrix, settings.dad_heatmap_sensitivity()))
+                palette = settings.dad_heatmap_palette()
+                lookup = (np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+                          if palette == "grey" else pg.colormap.get(palette).getLookupTable(nPts=256, alpha=False))
+                image.setLookupTable(lookup)
+                image.setRect(QRectF(times.min(), waves.min(), np.ptp(times) or 1, np.ptp(waves) or 1))
+                self.uv.addItem(image); self.uv.setLabel("left", "Wavelength", units="nm")
+                self.uv.setTitle(f"DAD heatmap (first selected file; upper {settings.dad_heatmap_sensitivity()} percentile)")
             return
         all_times = []
         tic_by_polarity = {"+": {}, "-": {}}

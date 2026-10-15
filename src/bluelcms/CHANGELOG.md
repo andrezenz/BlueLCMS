@@ -3,6 +3,15 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev22
+
+- Removed the redundant mounted-remote folder action; **Manage mzML locations**
+  now handles mounted and local folders together.
+- Combined cursor snap units and range into one settings dialog, with screen
+  pixels (±10 px) as the default for new preferences.
+- Added a persistent, per-version changelog splash on first launch.
+- Added persistent DAD heatmap intensity sensitivity and palette controls.
+
 ## 1.0.2.dev21
 
 - Reduced contrast of the positive and negative TIC lines in cached and
