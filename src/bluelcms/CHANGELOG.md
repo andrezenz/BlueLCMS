@@ -3,6 +3,16 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev19
+
+- Fixed Nautilus thumbnailing of compact `.npz` caches: detect the archive by
+  its ZIP signature because GNOME's sandbox renames input files to a generic
+  temporary basename before invoking the thumbnailer.
+- Changed cached and headless previews to a light theme with thicker, darker
+  colored UV and TIC traces.
+- Changed the headless thumbnailer, which also invalidates the previous failed
+  thumbnail records on upgrade so Files retries these caches.
+
 ## 1.0.2.dev18
 
 - Added a startup migration that installs the Linux MIME and Nautilus thumbnailer

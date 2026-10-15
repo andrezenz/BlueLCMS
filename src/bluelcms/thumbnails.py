@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 PREVIEW_SIZES = (128, 256, 512)
-PREVIEW_COLORS = {"uv": "#48a9ef", "+": "#4ecf88", "-": "#f36f6f"}
+PREVIEW_COLORS = {"uv": "#1769aa", "+": "#187a45", "-": "#b52f36"}
 
 
 def nearest_uv_trace(run, target=254.0):
@@ -43,7 +43,7 @@ def render_preview(run, size=128):
     """Create a square PNG with independently normalized, overlaid traces."""
     if not isinstance(size, int) or not 16 <= size <= 1024:
         raise ValueError("Preview size must be between 16 and 1024 pixels")
-    image = Image.new("RGB", (size, size), "#101820")
+    image = Image.new("RGB", (size, size), "#f7f9fb")
     painter = ImageDraw.Draw(image)
     margin = max(5, round(size * .075))
     legend_height = max(30, round(size * .29))
@@ -51,14 +51,14 @@ def render_preview(run, size=128):
     top, bottom = margin, size - margin - legend_height
     plot_width, plot_height = right - left, bottom - top
 
-    grid = "#37434d"
+    grid = "#dce2e7"
     for index in range(5):
         x = round(left + plot_width * index / 4)
         painter.line((x, top, x, bottom), fill=grid, width=max(1, round(size / 256)))
     for index in range(4):
         y = round(top + plot_height * index / 3)
         painter.line((left, y, right, y), fill=grid, width=max(1, round(size / 256)))
-    painter.line((left, bottom, right, bottom), fill="#71808b", width=max(1, round(size / 256)))
+    painter.line((left, bottom, right, bottom), fill="#87939c", width=max(1, round(size / 256)))
 
     series = preview_series(run)
     all_times = [np.asarray(times, dtype=float) for _, _, times, values in series if len(times) and len(values)]
@@ -79,8 +79,9 @@ def render_preview(run, size=128):
         normalized = np.full(len(values), .5) if high <= low else (values - low) / (high - low)
         points = [(round(left + (time - time_min) / (time_max - time_min) * plot_width),
                    round(bottom - value * plot_height)) for time, value in zip(times, normalized)]
+        stroke = max(2, round(size / 96))
         if kind == "uv":
-            painter.line(points, fill=PREVIEW_COLORS[kind], width=max(1, round(size / 150)))
+            painter.line(points, fill=PREVIEW_COLORS[kind], width=stroke)
         else:
             dash = max(2, round(size / 64))
             for first, second in zip(points, points[1:]):
@@ -88,7 +89,7 @@ def render_preview(run, size=128):
                 for start in range(0, distance, dash * 2):
                     end = min(distance, start + dash)
                     segment = tuple(round(first[i] + (second[i] - first[i]) * t / distance) for t in (start, end) for i in (0, 1))
-                    painter.line(segment, fill=PREVIEW_COLORS[kind], width=max(1, round(size / 150)))
+                    painter.line(segment, fill=PREVIEW_COLORS[kind], width=stroke)
 
     font = ImageFont.load_default(size=max(7, round(size * .07)))
     row_height = legend_height / 3
@@ -96,8 +97,8 @@ def render_preview(run, size=128):
         x = left + max(2, round(size * .02))
         legend_y = bottom + row_height * (index + .5)
         painter.line((x, round(legend_y), x + max(8, size * .055), round(legend_y)),
-                     fill=PREVIEW_COLORS[kind], width=max(1, round(size / 100)))
-        painter.text((x + max(11, size * .075), round(legend_y - font.size / 2)), label, font=font, fill="#e7edf2")
+                     fill=PREVIEW_COLORS[kind], width=max(2, round(size / 96)))
+        painter.text((x + max(11, size * .075), round(legend_y - font.size / 2)), label, font=font, fill="#17242e")
     from io import BytesIO
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)

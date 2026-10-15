@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
+from PIL import Image
 from PySide6.QtGui import QImage
 
 from bluelcms.folders import cleanup_expired_cache
@@ -39,6 +40,15 @@ def test_preview_uses_nearest_uv_and_valid_square_png_sizes():
         image = QImage.fromData(render_preview(sample_run(), size), "PNG")
         assert not image.isNull()
         assert image.width() == image.height() == size
+
+
+def test_preview_uses_light_background_and_distinct_dark_trace_colors():
+    import io
+
+    image = np.asarray(Image.open(io.BytesIO(render_preview(sample_run(), 256))).convert("RGB"))
+    assert np.all(image[0, 0] > 240)
+    for color in ((23, 105, 170), (24, 122, 69), (181, 47, 54)):
+        assert np.any(np.all(image == color, axis=2))
 
 
 def test_compact_cache_embeds_and_saves_all_preview_sizes(tmp_path, monkeypatch):
@@ -80,6 +90,14 @@ def test_headless_thumbnailer_generates_from_mzml_and_embedded_cache(tmp_path):
         assert result.returncode == 0, result.stderr
         image = QImage(str(output))
         assert image.width() == image.height() == 256
+    # Nautilus/bubblewrap renames the source to a temporary basename that
+    # retains only the final extension (e.g. gnome-desktop-file-to-thumbnail.npz).
+    sandbox_cache = tmp_path / "gnome-desktop-file-to-thumbnail.npz"
+    sandbox_cache.write_bytes(cache.read_bytes())
+    output = tmp_path / "sandbox-cache.png"
+    result = subprocess.run([sys.executable, str(helper), "128", str(sandbox_cache), str(output)], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert QImage(str(output)).width() == 128
     output = tmp_path / "source-via-app-cli.png"
     result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "launch.py"),
                              "--thumbnail", "128", str(source), str(output)],
