@@ -181,9 +181,10 @@ and are cached without being added to the selected plots.
 - Change **Wavelength** to redraw all selected DAD traces without rereading the
   source files. Choose **DAD heatmap** to view wavelength versus retention time
   for the first selected run. In heatmap mode, **Heatmap sensitivity (%)** sets
-  the upper intensity percentile mapped to the brightest color; lower values
-  increase contrast for weaker signals. **Heatmap color spectrum** offers
-  Viridis, Plasma, Inferno, Magma, and Greyscale. Both settings persist.
+  a linear percentage of the maximum absorption mapped to the darkest color, and
+  **Heatmap color baseline (%)** shifts the absorption value mapped to white.
+  **Heatmap color spectrum** offers PuBu, Viridis, Plasma, Inferno, Magma, and
+  Greyscale. All settings persist.
 - Positive and negative histograms are stacked and share their m/z navigation.
   When zoomed out, all 0.1 Th source bins that fall into one screen pixel are
   summed into that pixel's bar. Zooming back in restores the source resolution.

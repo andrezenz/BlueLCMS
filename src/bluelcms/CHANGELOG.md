@@ -1,3 +1,7 @@
+## 1.0.2.dev25
+
+- Made DAD heatmap sensitivity linear in the displayed absorption scale, eliminating harsh percentile jumps, while retaining the zero baseline.
+
 ## 1.0.2.dev24
 
 - Made PuBu the default DAD heatmap palette, with zero-baseline absorption sensitivity, interactive drag zoom, double-click reset, and shift-wheel baseline adjustment.

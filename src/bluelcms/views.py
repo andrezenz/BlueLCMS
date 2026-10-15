@@ -35,17 +35,12 @@ def heatmap_reference_span(matrix):
     return max(maximum if maximum > 0 else float(np.abs(finite).max()), 1e-12)
 
 
-def heatmap_levels(matrix, sensitivity_percentile, baseline=0.0, reference_span=None):
-    """Map zero absorption to white and clip high values at the chosen percentile."""
-    values = np.asarray(matrix, dtype=float)
-    finite = values[np.isfinite(values)] if values.size else np.array([])
-    if finite.size:
-        upper = float(np.percentile(finite, sensitivity_percentile))
-    else:
-        upper = float(baseline) + 1.0
-    upper += float(baseline)
+def heatmap_levels(matrix, sensitivity_percent=100, baseline=0.0, reference_span=None):
+    """Linearly scale the displayed absorption range from a zero-baseline floor."""
+    span = heatmap_reference_span(matrix) if reference_span is None else reference_span
+    upper = float(baseline) + span * max(0.0, min(1.0, sensitivity_percent / 100.0))
     if upper <= baseline:
-        upper = float(baseline) + 1.0
+        upper = float(baseline) + span / 1000.0
     return float(baseline), upper
 
 

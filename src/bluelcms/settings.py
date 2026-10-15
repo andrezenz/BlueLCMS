@@ -151,14 +151,14 @@ def extracted_tics() -> list[dict]:
 def dad_heatmap_sensitivity() -> int:
     stored = settings().value("dad_heatmap_sensitivity", None)
     if stored is None:
-        stored = settings().value("dad_heatmap_range_percent", 99, type=int)
-    return min(100, max(50, int(stored)))
+        stored = settings().value("dad_heatmap_range_percent", 100, type=int)
+    return min(100, max(0, int(stored)))
 
 
-def set_dad_heatmap_sensitivity(percentile: int) -> None:
-    if not 50 <= percentile <= 100:
-        raise ValueError("Heatmap sensitivity percentile must be between 50 and 100.")
-    settings().setValue("dad_heatmap_sensitivity", percentile)
+def set_dad_heatmap_sensitivity(percent: int) -> None:
+    if not 0 <= percent <= 100:
+        raise ValueError("Heatmap sensitivity must be between 0 and 100 percent.")
+    settings().setValue("dad_heatmap_sensitivity", percent)
 
 
 def dad_heatmap_palette() -> str:

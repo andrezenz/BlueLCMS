@@ -441,10 +441,10 @@ class MainWindow(QMainWindow):
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
         self.wavelength.valueChanged.connect(self.draw_uv)
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.update_heatmap_controls); self.mode.currentIndexChanged.connect(self.draw_uv)
-        self.heatmap_sensitivity_label = QLabel("Heatmap sensitivity (%)")
-        self.heatmap_sensitivity = QSpinBox(); self.heatmap_sensitivity.setRange(50, 100)
+        self.heatmap_sensitivity_label = QLabel("Heatmap color scale (%)")
+        self.heatmap_sensitivity = QSpinBox(); self.heatmap_sensitivity.setRange(0, 100)
         self.heatmap_sensitivity.setValue(settings.dad_heatmap_sensitivity())
-        self.heatmap_sensitivity.setToolTip("Upper absorption percentile mapped to the darkest color. Lower values increase contrast for weaker signals.")
+        self.heatmap_sensitivity.setToolTip("Percentage of the maximum absorption mapped to the darkest color. Lower values increase contrast for weaker signals.")
         self.heatmap_sensitivity.valueChanged.connect(self.set_heatmap_sensitivity)
         self.heatmap_baseline_label = QLabel("Color baseline (% of data range)")
         self.heatmap_baseline = QSlider(Qt.Orientation.Horizontal); self.heatmap_baseline.setRange(-100, 100)
@@ -688,7 +688,7 @@ class MainWindow(QMainWindow):
         if shift_baseline:
             self.heatmap_baseline.setValue(self.heatmap_baseline.value() + direction * steps)
         else:
-            self.heatmap_sensitivity.setValue(min(100, max(50, self.heatmap_sensitivity.value() + direction * steps)))
+            self.heatmap_sensitivity.setValue(min(100, max(0, self.heatmap_sensitivity.value() + direction * steps)))
 
     def set_heatmap_palette(self, index):
         palette = self.heatmap_palette.itemData(index)
@@ -701,11 +701,8 @@ class MainWindow(QMainWindow):
         self.heatmap_baseline_label.setText(f"Color baseline: {self.heatmap_baseline.value():+d}% of data range")
         if self.heatmap_image is None or self.mode.currentText() != "DAD heatmap":
             return
-        values = self.heatmap_matrix[np.isfinite(self.heatmap_matrix)] if self.heatmap_matrix is not None else np.array([])
-        if values.size:
-            self.heatmap_percentile = float(np.percentile(values, settings.dad_heatmap_sensitivity()))
         baseline = settings.dad_heatmap_baseline() * self.heatmap_span
-        levels = (baseline, max(self.heatmap_percentile + baseline, baseline + 1.0))
+        levels = heatmap_levels(None, settings.dad_heatmap_sensitivity(), baseline, reference_span=self.heatmap_span)
         color_map = dad_heatmap_colormap(settings.dad_heatmap_palette())
         self.heatmap_image.setColorMap(color_map)
         self.heatmap_image.setLevels(levels)
@@ -719,14 +716,14 @@ class MainWindow(QMainWindow):
             self.heatmap_colorbar.setColorMap(color_map)
             self.heatmap_colorbar.setLevels(levels)
         self.heatmap_colorbar.show()
-        self.uv.setTitle(f"DAD heatmap — UV scale {levels[0]:.4g} to {levels[1]:.4g}; upper {settings.dad_heatmap_sensitivity()} percentile; drag to zoom")
+        self.uv.setTitle(f"DAD heatmap — UV scale {levels[0]:.4g} to {levels[1]:.4g}; color scale {settings.dad_heatmap_sensitivity()}%; drag to zoom")
 
     def reset_heatmap_zoom(self):
         if self.mode.currentText() == "DAD heatmap" and self.heatmap_bounds is not None:
             self.uv.view.setRange(rect=self.heatmap_bounds, padding=0)
 
     def reset_heatmap_colors(self):
-        self.heatmap_sensitivity.setValue(99)
+        self.heatmap_sensitivity.setValue(100)
         self.heatmap_baseline.setValue(0)
         self.update_heatmap_colors()
 
@@ -757,7 +754,6 @@ class MainWindow(QMainWindow):
                 return
             self.heatmap_span = heatmap_reference_span(matrix)
             self.heatmap_matrix = matrix
-            self.heatmap_percentile = float(np.percentile(matrix[np.isfinite(matrix)], settings.dad_heatmap_sensitivity()))
             self.heatmap_source = run
             self.heatmap_image = pg.ImageItem(matrix.T, autoLevels=False, axisOrder="row-major")
             self.heatmap_bounds = QRectF(float(times.min()), float(waves.min()), float(np.ptp(times) or 1), float(np.ptp(waves) or 1))
