@@ -27,6 +27,7 @@ from .external import OpenRequestServer, forward_request, parse_request
 from .version import application_version
 from .help import DocumentDialog
 from .notifications import DesktopNotifications
+from .linux_integration import ensure_thumbnailer_registered
 from .mzml import NATIVE_BIN_WIDTH, cache_has_previews, display_bin_width, discover_files, extracted_tic, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
@@ -749,6 +750,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Update complete. Restart BlueLCMS to use the new version.")
 
     def startup_checks(self):
+        registration_error = ensure_thumbnailer_registered()
+        if isinstance(registration_error, Exception):
+            self.statusBar().showMessage(f"Could not register Linux file thumbnails: {registration_error}")
         self.check_packaged_release()
         if settings.cache_folder() is None:
             answer = QMessageBox.question(self, "No cache folder configured",

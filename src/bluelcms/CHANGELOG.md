@@ -3,6 +3,12 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev17
+
+- Added a startup migration that installs the Linux MIME and Nautilus thumbnailer
+  registration. This supports upgrades from older packages whose updater only
+  replaced app files and skipped `install.sh`.
+
 ## 1.0.2.dev16
 
 - Fixed Linux package updates skipping `install.sh`; in-app updates now refresh
