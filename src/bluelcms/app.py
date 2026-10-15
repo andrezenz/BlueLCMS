@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
 from . import settings
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
 from .integrations import integrate_trace, load_integrations, save_integrations
-from . import updater
+from . import bug_reports, updater
+from .bug_reports import BugReportDialog, github_issue_url
 from . import releases
 from . import package_updater
 from .sidebar import MeasurementItem, MeasurementTree
@@ -435,6 +436,9 @@ class MainWindow(QMainWindow):
         about_menu.addAction(about_action)
         for text, slot in (("Changelog…", self.show_changelog), ("External program commands…", self.show_external_commands)):
             action = QAction(text, self); action.triggered.connect(slot); about_menu.addAction(action)
+        report_action = QAction("Report bug…", self)
+        report_action.triggered.connect(self.report_bug)
+        about_menu.addAction(report_action)
         self.files, self.folder_label = MeasurementTree(), QLabel("Choose a data folder in Settings")
         self.files.itemSelectionChanged.connect(self.select_files)
         self.folder_label.setWordWrap(True)
@@ -905,6 +909,24 @@ class MainWindow(QMainWindow):
 
     def show_external_commands(self):
         DocumentDialog("BlueLCMS external program commands", "EXTERNAL_COMMANDS.md", self).exec()
+
+    def report_bug(self, title="", description="", labels=("bug",), open_url=True, collect_diagnostics=True):
+        dialog = BugReportDialog(self, title=title, description=description, include_environment=collect_diagnostics)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        title, description, include = dialog.values()
+        body = bug_reports.bug_report_body(title, description, include_environment=include, window=self)
+        repository = bug_reports.GITHUB_REPOSITORY
+        url = bug_reports.github_issue_url(title=title or "Bug report from BlueLCMS", body=body, labels=labels, repo=repository)
+        if open_url:
+            QDesktopServices.openUrl(url)
+            self.statusBar().showMessage("Opened a GitHub bug report draft in your browser.")
+        return url
+
+    report_issue = report_bug
+    open_bug_report = report_bug
+    open_issue = report_bug
+    bug_report = report_bug
 
     def check_updates(self):
         self.statusBar().showMessage("Checking GitHub for updates…")

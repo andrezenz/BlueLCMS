@@ -1,4 +1,8 @@
-# BlueLCMS changelog
+## 1.0.2.dev27
+
+- Added an About action/dialog that reports a bug through a prefilled GitHub issue, including version and runtime diagnostics.
+
+elog
 
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
