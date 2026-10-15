@@ -109,12 +109,23 @@ class RegionViewBox(ResetViewBox):
 
 class UVPlot(pg.PlotWidget):
     integrate_requested = Signal()
+    heatmap_cursor_moved = Signal(float)
     def __init__(self):
         self.view = RegionViewBox()
         super().__init__(viewBox=self.view)
         self.heatmap_zoom_preview = QGraphicsRectItem()
-        self.heatmap_zoom_preview.setPen(QPen(QColor("#e7a83e"), 1.5, Qt.PenStyle.DashLine))
-        self.heatmap_zoom_preview.setBrush(QBrush(QColor(231, 168, 62, 45)))
+        self.heatmap_zoom_preview.setPen(QPen(QColor("#48a9ef"), 1.5, Qt.PenStyle.SolidLine))
+        self.heatmap_zoom_preview.setBrush(QBrush(QColor(72, 169, 239, 45)))
+        self.heatmap_cursor = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen("#ffd25a", width=1.5, style=Qt.PenStyle.SolidLine),
+            label="t {value:.3f} min",
+            labelOpts={"position": 0.96, "color": "#ffd25a", "fill": (16,33,45,160)})
+        self.heatmap_cursor.setZValue(31)
+        self.heatmap_cursor.hide()
+        self.addItem(self.heatmap_cursor, ignoreBounds=True)
+        self.scene().sigMouseMoved.connect(self.move_heatmap_cursor)
+
         self.heatmap_zoom_preview.setZValue(30)
         self.heatmap_zoom_preview.hide()
         self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
@@ -144,6 +155,24 @@ class UVPlot(pg.PlotWidget):
     def clear_uv(self):
         self.plotItem.clear()
         self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
+        if hasattr(self, "heatmap_cursor"):
+            self.addItem(self.heatmap_cursor, ignoreBounds=True)
+
+    def move_heatmap_cursor(self, position):
+        if not self.view.heatmap_mode:
+            self.heatmap_cursor.hide()
+            return
+        if not self.getViewBox().sceneBoundingRect().contains(position):
+            self.heatmap_cursor.hide()
+            return
+        time = self.view.mapSceneToView(position).x()
+        self.heatmap_cursor.setPos(time)
+        self.heatmap_cursor.show()
+        self.heatmap_cursor_moved.emit(float(time))
+
+    def leaveEvent(self, event):
+        self.heatmap_cursor.hide()
+        super().leaveEvent(event)
 
     def preview_heatmap_zoom(self, x1, y1, x2, y2):
         self.heatmap_zoom_preview.setRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())

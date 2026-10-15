@@ -1,5 +1,7 @@
 ## 1.0.2.dev25
 
+- Added a solid DAD heatmap zoom rectangle, a vertical cursor guideline, and a togglable live UV spectrum window at the cursor.
+
 - Made DAD heatmap sensitivity linear in the displayed absorption scale, eliminating harsh percentile jumps, while retaining the zero baseline.
 
 ## 1.0.2.dev24

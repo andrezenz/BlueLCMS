@@ -471,6 +471,22 @@ class MainWindow(QMainWindow):
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.heatmap_sensitivity_label); controls_layout.addWidget(self.heatmap_sensitivity); controls_layout.addWidget(self.heatmap_baseline_label); controls_layout.addWidget(self.heatmap_baseline); controls_layout.addWidget(self.heatmap_palette_label); controls_layout.addWidget(self.heatmap_palette); controls_layout.addWidget(self.heatmap_auto); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
+        self.uv_spectrum_dock = QDockWidget("UV spectrum at cursor", self)
+        self.uv_spectrum_plot = pg.PlotWidget()
+        self.uv_spectrum_plot.setLabel("bottom", "Wavelength", units="nm")
+        self.uv_spectrum_plot.setLabel("left", "UV signal")
+        self.uv_spectrum_plot.showGrid(x=True, y=True, alpha=.2)
+        self.uv_spectrum_curve = self.uv_spectrum_plot.plot(pen=pg.mkPen("#48a9ef", width=2))
+        self.uv_spectrum_dock.setWidget(self.uv_spectrum_plot)
+        self.uv_spectrum_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.uv_spectrum_dock.setVisible(settings.uv_spectrum_at_cursor())
+        self.uv_spectrum_at_cursor = self.set_uv_spectrum_at_cursor
+        if not settings.uv_spectrum_at_cursor():
+            self.uv_spectrum_dock.hide()
+        self.pending_live_uv_spectrum_time = None
+        self.live_uv_spectrum = self.uv_spectrum_dock
+        self.live_uv_spectrum_plot = self.uv_spectrum_plot
+        self.live_uv_spectrum_curve = self.uv_spectrum_curve
         self.heatmap_image = None
         self.heatmap_source = None
         self.heatmap_colorbar = None
@@ -480,11 +496,21 @@ class MainWindow(QMainWindow):
         self.heatmap_percentile = 99.0
         self.uv.view.heatmap_wheel.connect(self.adjust_heatmap_colorscale)
         self.uv.view.reset_requested.connect(self.reset_heatmap_zoom)
+        self.uv.heatmap_cursor_moved.connect(self.update_live_uv_spectrum_at_cursor)
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
         root = QSplitter(Qt.Orientation.Horizontal); root.addWidget(controls); root.addWidget(plots); root.setStretchFactor(1, 1); root.setSizes([250, 1000]); self.setCentralWidget(root)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.uv_spectrum_dock)
+        self.uv_spectrum_action = QAction("UV spectrum at cursor", self)
+        self.uv_spectrum_action.setCheckable(True)
+        self.uv_spectrum_action.setChecked(settings.uv_spectrum_at_cursor())
+        self.uv_spectrum_action.toggled.connect(self.set_uv_spectrum_at_cursor)
+        action = self.uv_spectrum_action
+        menu = self.menuBar().addMenu("Display")
+        menu.addAction(action)
+        toolbar.addAction(action)
         self.integration_table = QTableWidget(0, 5)
         self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Wavelength (nm)", "Absolute integral", "% of integrals"))
         self.integration_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -766,10 +792,55 @@ class MainWindow(QMainWindow):
     def update_heatmap_controls(self, *_):
         visible = self.mode.currentText() == "DAD heatmap"
         self.uv.view.heatmap_mode = visible
+        self.uv.heatmap_cursor.setVisible(visible)
+        if visible:
+            if settings.uv_spectrum_at_cursor():
+                self.uv_spectrum_dock.show()
+        else:
+            self.uv_spectrum_dock.hide()
         for widget in (self.heatmap_sensitivity_label, self.heatmap_sensitivity,
                        self.heatmap_baseline_label, self.heatmap_baseline,
                        self.heatmap_palette_label, self.heatmap_palette, self.heatmap_auto):
             widget.setVisible(visible)
+
+    def set_uv_spectrum_at_cursor(self, enabled):
+        settings.set_uv_spectrum_at_cursor(enabled)
+        if hasattr(self, "uv_spectrum_at_cursor_action"):
+            self.uv_spectrum_action.setChecked(enabled)
+        if enabled and self.mode.currentText() == "DAD heatmap":
+            self.uv_spectrum_dock.show()
+        else:
+            self.uv_spectrum_dock.hide()
+
+    def toggle_uv_spectrum_at_cursor(self):
+        self.set_uv_spectrum_at_cursor(not settings.uv_spectrum_at_cursor())
+
+    def show_uv_spectrum_at_cursor(self):
+        self.set_uv_spectrum_at_cursor(True)
+
+    def update_live_uv_spectrum_at_cursor(self, time):
+        if self.mode.currentText() != "DAD heatmap" or not settings.uv_spectrum_at_cursor():
+            return
+        if not self.uv_spectrum_dock.isVisible():
+            return
+        if not self.runs:
+            self.uv_spectrum_curve.setData([], [])
+            self.uv_spectrum_plot.setTitle("UV spectrum at cursor — loading")
+            return
+        run = next(iter(self.runs.values()))
+        times, waves, matrix = run.heatmap()
+        if not len(times) or not len(waves) or matrix.size == 0:
+            self.uv_spectrum_curve.setData([], [])
+            self.uv_spectrum_plot.setTitle("UV spectrum at cursor — no UV data")
+            return
+        index = min(len(times) - 1, max(0, int(np.searchsorted(times, time))))
+        if index and abs(times[index - 1] - time) < abs(times[index] - time):
+            index -= 1
+        self.uv_spectrum_curve.setData(waves, matrix[index, :])
+        self.uv_spectrum_plot.setTitle(f"UV spectrum at {times[index]:.3f} min")
+        self.uv_spectrum_plot.setLabel("left", "UV signal")
+        self.uv_spectrum_plot.setLabel("bottom", "Wavelength", units="nm")
+        self.pending_live_uv_spectrum_time = float(times[index])
 
     def update_cursor_snapping(self):
         for plot in (self.positive, self.negative):
@@ -1523,6 +1594,8 @@ class MainWindow(QMainWindow):
             return
         self.uv.view.heatmap_mode = False
         self.uv.heatmap_zoom_preview.hide()
+        self.uv.heatmap_cursor.hide()
+        self.uv_spectrum_dock.hide()
         self.uv.tic_view.show()
         if self.heatmap_colorbar is not None:
             self.heatmap_colorbar.hide()

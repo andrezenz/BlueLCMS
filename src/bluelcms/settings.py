@@ -148,6 +148,14 @@ def extracted_tics() -> list[dict]:
     return result
 
 
+
+def uv_spectrum_at_cursor() -> bool:
+    return settings().value("uv_spectrum_at_cursor", False, type=bool)
+
+
+def set_uv_spectrum_at_cursor(enabled: bool) -> None:
+    settings().setValue("uv_spectrum_at_cursor", bool(enabled))
+
 def dad_heatmap_sensitivity() -> int:
     stored = settings().value("dad_heatmap_sensitivity", None)
     if stored is None:
