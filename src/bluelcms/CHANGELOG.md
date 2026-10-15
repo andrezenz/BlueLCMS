@@ -3,6 +3,15 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev15
+
+- Added cached chromatogram PNG previews at 128, 256, and 512 px with nearest
+  254 nm UV, positive TIC, and negative TIC overlaid in separate colors.
+- Embedded previews in compact caches, exposed private PNG sidecars for other
+  programs, and primed Ubuntu's standard thumbnail cache for original files.
+- Registered a Nautilus thumbnailer for BlueLCMS cache, mzML, and gzip-mzML files;
+  it reads embedded previews or parses unopened mzML headlessly on demand.
+
 ## 1.0.2.dev13
 
 - Added screen-pixel cursor snapping. Its m/z search radius narrows as the user

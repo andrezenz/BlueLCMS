@@ -251,6 +251,20 @@ Set **Cache expiry** in the left sidebar to remove cached entries after a chosen
 number of days; the default is **Never** (zero disables automatic expiry).
 Previously saved expiry preferences are retained.
 
+When a measurement is cached, BlueLCMS creates 128×128, 256×256, and 512×512
+PNG previews overlaid with the nearest available wavelength to 254 nm, positive
+TIC, and negative TIC. Each trace is independently normalized, and the UV legend
+reports the actual wavelength used. PNG sidecars live in `<cache folder>/previews/`
+and are also embedded in the compact cache; other programs can consume them directly.
+
+On Ubuntu, the Linux installer registers Nautilus thumbnails for BlueLCMS
+compact caches, `.mzML`, and `.mzML.gz`. Compact caches use embedded PNGs;
+unopened mzML files can be previewed headlessly on demand. When an opened source
+is cached, BlueLCMS also primes GNOME's standard thumbnail cache for the original
+file. Remote thumbnail requests are subject to Nautilus's remote-preview policy.
+Log out and back in (or restart Files) after installing so it reloads MIME and
+thumbnailer registrations.
+
 For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The
 complete, sorted trace replaces the preview when loading finishes; the heatmap

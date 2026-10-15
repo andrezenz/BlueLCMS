@@ -230,12 +230,15 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
     temporary = path.with_name(f".{path.name}.part")
     dad = _pack_scans(run.dad, "wavelength") if run.dad else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
     ms = _pack_scans(run.scans, "mz") if run.scans else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
+    from .thumbnails import PREVIEW_SIZES, render_preview
+    previews = {size: render_preview(run, size) for size in PREVIEW_SIZES}
     payload = {
         "source_metadata": np.array(source_metadata),
         "tic": np.asarray([(time, value) for time, value, _ in run.tic]).reshape(-1, 2),
         "tic_polarity": np.asarray([polarity for _, _, polarity in run.tic]),
         "auxiliary_names": np.asarray([trace.name for trace in run.auxiliary]),
         "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
+        **{f"preview_{size}": np.frombuffer(content, dtype=np.uint8) for size, content in previews.items()},
         "dad_times": np.asarray([scan.time for scan in run.dad]), "dad_shared": dad["shared"], "dad_axis": dad["axis"], "dad_intensity": dad["intensity"],
         "ms_times": np.asarray([scan.time for scan in run.scans]), "ms_polarity": np.asarray([scan.polarity for scan in run.scans]), "ms_shared": ms["shared"], "ms_axis": ms["axis"], "ms_intensity": ms["intensity"],
     }
@@ -248,9 +251,29 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
         with temporary.open("wb") as output:
             np.savez_compressed(output, **payload)
         temporary.replace(path)
+        from .thumbnails import save_preview_files, write_desktop_thumbnail
+        try:
+            save_preview_files(path, previews)
+            if source_metadata:
+                import json
+                metadata = json.loads(source_metadata)
+                if isinstance(metadata, dict) and not metadata.get("vendor") and metadata.get("path"):
+                    write_desktop_thumbnail(Path(metadata["path"]), previews)
+        except (ValueError, OSError):
+            # The analysis cache remains valid even if the desktop thumbnail
+            # cache is read-only or unavailable.
+            pass
     finally:
         temporary.unlink(missing_ok=True)
     return path
+
+
+def cache_has_previews(path: Path) -> bool:
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            return all(f"preview_{size}" in data for size in (128, 256, 512))
+    except (OSError, ValueError, KeyError):
+        return False
 
 
 def load_compact_cache(path: Path, dad_callback=None, scan_callback=None) -> Run:

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-bluelcms-cache">
+    <comment>BlueLCMS cached mass spectrometry measurement</comment>
+    <glob pattern="*.bluelcms.npz" weight="90"/>
+  </mime-type>
+  <mime-type type="application/x-bluelcms-mzml">
+    <comment>mzML mass spectrometry measurement</comment>
+    <glob pattern="*.mzML" weight="80"/>
+    <glob pattern="*.mzml" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-bluelcms-mzml-gzip">
+    <comment>Compressed mzML mass spectrometry measurement</comment>
+    <glob pattern="*.mzML.gz" weight="90"/>
+    <glob pattern="*.mzml.gz" weight="90"/>
+  </mime-type>
+</mime-info>

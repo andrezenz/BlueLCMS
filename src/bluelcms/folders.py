@@ -70,6 +70,10 @@ def cleanup_expired_cache(cache_folder: Path | None, expiry_days: int) -> int:
                 if item.stat().st_mtime < cutoff:
                     item.unlink()
                     removed += 1
+                    if item.name.endswith(".bluelcms.npz"):
+                        previews = cache_folder / "previews"
+                        for size in (128, 256, 512):
+                            (previews / f"{item.stem}-{size}.png").unlink(missing_ok=True)
             except OSError:
                 pass
     return removed

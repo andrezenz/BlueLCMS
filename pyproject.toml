@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bluelcms"
-version = "1.0.2.dev13"
+version = "1.0.2.dev15"
 description = "Standalone LC-MS and DAD data viewer"
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,6 +16,7 @@ dependencies = [
     "pyteomics>=5,<6",
     "lxml>=5,<7",
     "psims>=1.3,<2",
+    "Pillow>=10.1,<13",
 ]
 
 [project.optional-dependencies]

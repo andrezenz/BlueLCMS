@@ -27,7 +27,7 @@ from .external import OpenRequestServer, forward_request, parse_request
 from .version import application_version
 from .help import DocumentDialog
 from .notifications import DesktopNotifications
-from .mzml import NATIVE_BIN_WIDTH, display_bin_width, discover_files, extracted_tic, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
+from .mzml import NATIVE_BIN_WIDTH, cache_has_previews, display_bin_width, discover_files, extracted_tic, file_display_name, load_run, mass_histograms, rebin_histogram, write_compact_cache
 from .vendor import (MeasurementKey, VendorMeasurement, advion_raw_path, discover_vendor_measurements,
     load_vendor_measurement)
 
@@ -1223,6 +1223,10 @@ class MainWindow(QMainWindow):
             name = path.label if isinstance(path, VendorMeasurement) else path.name
             self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {self.queue_marker()} {name}…"); self.progress.show()
             self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
+        elif cache and cache.is_file() and not cache_has_previews(cache):
+            # Backfill portable PNGs and update the standard desktop thumbnail
+            # cache the first time a pre-preview compact cache is opened.
+            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
         self.finish_load(path)
 
     def selected_integration_source(self):
@@ -1523,6 +1527,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--thumbnail":
+        from .thumbnailer import main as thumbnail_main
+        return thumbnail_main(sys.argv[2:])
     request = parse_request(sys.argv[1:])
     app = QApplication(sys.argv[:1])
     app.setApplicationName("BlueLCMS"); app.setApplicationVersion(application_version()); app.setWindowIcon(application_icon())
