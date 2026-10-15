@@ -797,10 +797,8 @@ class MainWindow(QMainWindow):
     def update_heatmap_controls(self, *_):
         visible = self.mode.currentText() == "DAD heatmap"
         self.uv.view.heatmap_mode = visible
-        self.uv.heatmap_cursor.setVisible(visible)
-        if visible:
-            if settings.uv_spectrum_at_cursor():
-                self.uv_spectrum_dock.show()
+        if settings.uv_spectrum_at_cursor():
+            self.uv_spectrum_dock.show()
         else:
             self.uv_spectrum_dock.hide()
         for widget in (self.heatmap_sensitivity_label, self.heatmap_sensitivity,
@@ -812,7 +810,7 @@ class MainWindow(QMainWindow):
         settings.set_uv_spectrum_at_cursor(enabled)
         if hasattr(self, "uv_spectrum_at_cursor_action"):
             self.uv_spectrum_action.setChecked(enabled)
-        if enabled and self.mode.currentText() == "DAD heatmap":
+        if enabled:
             self.uv_spectrum_dock.show()
         else:
             self.uv_spectrum_dock.hide()
@@ -824,7 +822,7 @@ class MainWindow(QMainWindow):
         self.set_uv_spectrum_at_cursor(True)
 
     def update_live_uv_spectrum_at_cursor(self, time):
-        if self.mode.currentText() != "DAD heatmap" or not settings.uv_spectrum_at_cursor():
+        if not settings.uv_spectrum_at_cursor():
             return
         if not self.uv_spectrum_dock.isVisible():
             return
@@ -1649,9 +1647,11 @@ class MainWindow(QMainWindow):
             return
         self.uv.view.heatmap_mode = False
         self.uv.heatmap_zoom_preview.hide()
-        self.uv.heatmap_cursor.hide()
-        self.uv_spectrum_dock.hide()
         self.uv.tic_view.show()
+        if settings.uv_spectrum_at_cursor():
+            self.uv_spectrum_dock.show()
+        else:
+            self.uv_spectrum_dock.hide()
         if self.heatmap_colorbar is not None:
             self.heatmap_colorbar.hide()
         self.heatmap_image = None

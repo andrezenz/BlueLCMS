@@ -1,3 +1,7 @@
+## 1.0.2.dev28
+
+- Allowed the live UV spectrum cursor tool to work in ordinary UV trace mode as well as DAD heatmap mode.
+
 ## 1.0.2.dev27
 
 - Added an About action/dialog that reports a bug through a prefilled GitHub issue, including version and runtime diagnostics.

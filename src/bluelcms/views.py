@@ -178,9 +178,6 @@ class UVPlot(pg.PlotWidget):
         super().mousePressEvent(event)
 
     def move_heatmap_cursor(self, position):
-        if not self.view.heatmap_mode:
-            self.heatmap_cursor.hide()
-            return
         if not self.getViewBox().sceneBoundingRect().contains(position):
             self.heatmap_cursor.hide()
             return
