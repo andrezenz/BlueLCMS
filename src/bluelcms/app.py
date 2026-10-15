@@ -497,6 +497,7 @@ class MainWindow(QMainWindow):
         self.uv.view.heatmap_wheel.connect(self.adjust_heatmap_colorscale)
         self.uv.view.reset_requested.connect(self.reset_heatmap_zoom)
         self.uv.heatmap_cursor_moved.connect(self.update_live_uv_spectrum_at_cursor)
+        self.uv.heatmap_clicked.connect(self.select_dad_heatmap_time)
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
@@ -842,7 +843,39 @@ class MainWindow(QMainWindow):
         self.uv_spectrum_plot.setLabel("bottom", "Wavelength", units="nm")
         self.pending_live_uv_spectrum_time = float(times[index])
 
+    def select_dad_heatmap_time(self, time):
+        if self.mode.currentText() != "DAD heatmap" or not self.runs:
+            return
+        run = next(iter(self.runs.values()))
+        times, waves, matrix = run.heatmap()
+        if len(times) == 0:
+            return
+        index = min(len(times) - 1, max(0, int(np.searchsorted(times, time))))
+        if index and abs(times[index - 1] - time) < abs(times[index] - time):
+            index -= 1
+        time = float(times[index])
+        self.uv.heatmap_cursor.setPos(time)
+        self.uv.heatmap_cursor.show()
+        try:
+            self.uv.region.setBounds((float(times.min()), float(times.max())))
+            self.uv.region.setRegion((time, time))
+            self.uv.region.show()
+            self.timer.stop()
+            self.calculate_region()
+        except Exception:  # Keep clicks from aborting the view.
+            pass
+        self.update_live_uv_spectrum_at_cursor(time)
+        self.uv_spectrum_dock.show()
+        self.statusBar().showMessage(f"UV and MS spectra at {time:.3f} min")
+
+    def handle_dad_heatmap_click(self, time):
+        self.select_dad_heatmap_time(time)
+
+    def dad_heatmap_clicked(self, time):
+        self.select_dad_heatmap_time(time)
+
     def update_cursor_snapping(self):
+
         for plot in (self.positive, self.negative):
             unit = settings.mass_cursor_snap_unit()
             plot.set_cursor_snapping(settings.snap_mass_cursor(), settings.mass_cursor_snap_range(unit), unit)

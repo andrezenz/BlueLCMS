@@ -79,10 +79,17 @@ class RegionViewBox(ResetViewBox):
     heatmap_zoom_dragged = Signal(float, float, float, float)
     heatmap_zoom_finished = Signal(float, float, float, float)
     heatmap_wheel = Signal(int, bool)
+    heatmap_clicked = Signal(float)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.heatmap_mode = False
+
+    def mousePressEvent(self, event, axis=None):
+        if (self.heatmap_mode and event.button() == Qt.MouseButton.LeftButton):
+            pos = self.mapToView(event.pos())
+            self.heatmap_clicked.emit(float(pos.x()))
+        super().mousePressEvent(event)
 
     def wheelEvent(self, event, axis=None):
         if self.heatmap_mode:
@@ -110,6 +117,7 @@ class RegionViewBox(ResetViewBox):
 class UVPlot(pg.PlotWidget):
     integrate_requested = Signal()
     heatmap_cursor_moved = Signal(float)
+    heatmap_clicked = Signal(float)
     def __init__(self):
         self.view = RegionViewBox()
         super().__init__(viewBox=self.view)
@@ -125,6 +133,7 @@ class UVPlot(pg.PlotWidget):
         self.heatmap_cursor.hide()
         self.addItem(self.heatmap_cursor, ignoreBounds=True)
         self.scene().sigMouseMoved.connect(self.move_heatmap_cursor)
+        self.view.heatmap_clicked.connect(self.heatmap_clicked.emit)
 
         self.heatmap_zoom_preview.setZValue(30)
         self.heatmap_zoom_preview.hide()
@@ -157,6 +166,16 @@ class UVPlot(pg.PlotWidget):
         self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
         if hasattr(self, "heatmap_cursor"):
             self.addItem(self.heatmap_cursor, ignoreBounds=True)
+
+    def mousePressEvent(self, event, axis=None):
+        if (self.view.heatmap_mode
+                and event.button() == Qt.MouseButton.LeftButton
+                and hasattr(self, "heatmap_clicked")):
+            pos = self.view.mapToView(event.pos())
+            self.heatmap_cursor.setPos(pos.x())
+            self.heatmap_cursor.show()
+            self.heatmap_clicked.emit(float(pos.x()))
+        super().mousePressEvent(event)
 
     def move_heatmap_cursor(self, position):
         if not self.view.heatmap_mode:
