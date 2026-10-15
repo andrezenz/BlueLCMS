@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 PREVIEW_SIZES = (128, 256, 512)
 PREVIEW_FORMAT = 2
-PREVIEW_COLORS = {"uv": "#1769aa", "+": "#187a45", "-": "#b52f36"}
+PREVIEW_COLORS = {"uv": "#1769aa", "+": "#4a8c66", "-": "#c46a6e"}
 
 
 def nearest_uv_trace(run, target=254.0):

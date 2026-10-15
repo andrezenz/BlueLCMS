@@ -47,7 +47,7 @@ def test_preview_uses_light_background_and_distinct_dark_trace_colors():
 
     image = np.asarray(Image.open(io.BytesIO(render_preview(sample_run(), 256))).convert("RGB"))
     assert np.all(image[0, 0] > 240)
-    for color in ((23, 105, 170), (24, 122, 69), (181, 47, 54)):
+    for color in ((23, 105, 170), (74, 140, 102), (196, 106, 110)):
         assert np.any(np.all(image == color, axis=2))
 
 

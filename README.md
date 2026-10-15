@@ -254,7 +254,8 @@ Previously saved expiry preferences are retained.
 When a measurement is cached, BlueLCMS creates 128×128, 256×256, and 512×512
 PNG previews on a light background with thicker blue, green, and red traces for
 the nearest available wavelength to 254 nm, positive TIC, and negative TIC.
-Each trace is independently normalized, and the UV legend reports the actual
+Each trace is independently normalized; the UV trace has higher contrast than
+the positive and negative TIC traces. The UV legend reports the actual
 wavelength used. PNG sidecars live in `<cache folder>/previews/`
 and are also embedded in the compact cache; other programs can consume them directly.
 

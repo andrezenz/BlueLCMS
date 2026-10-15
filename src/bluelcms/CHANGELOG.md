@@ -3,6 +3,11 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev21
+
+- Reduced contrast of the positive and negative TIC lines in cached and
+  headlessly generated thumbnails; the UV trace color is unchanged.
+
 ## 1.0.2.dev20
 
 - Increased cached and headless thumbnail trace width and switched to a light
