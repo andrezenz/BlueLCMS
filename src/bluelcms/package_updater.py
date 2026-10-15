@@ -34,6 +34,22 @@ def replace_application(source: Path, destination: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def install_linux_package(extracted: Path, prefix: Path, home=None) -> None:
+    """Run the release's Linux installer so desktop and thumbnailer hooks update too."""
+    installer = extracted / "install.sh"
+    if not installer.is_file():
+        raise RuntimeError("The Linux package is missing its install.sh integration script.")
+    environment = os.environ.copy()
+    environment["BLUELCMS_INSTALL_PREFIX"] = str(prefix)
+    if home is not None:
+        environment["HOME"] = str(home)
+    try:
+        subprocess.run(["sh", str(installer)], cwd=extracted, env=environment, check=True,
+                       capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(error.stderr.strip() or "The Linux application installer failed.") from error
+
+
 def install(target: str) -> dict:
     tag = target.removeprefix("refs/tags/")
     release = releases.release(tag=tag)
@@ -55,7 +71,8 @@ def install(target: str) -> dict:
             application = extracted / "BlueLCMS"
             if not (application / "BlueLCMS").is_file():
                 raise RuntimeError("The Linux package is missing its executable.")
-            replace_application(application, executable.parent)
+            prefix = executable.parent.parent.parent
+            install_linux_package(extracted, prefix, Path.home())
             return {"version": tag, "executable": str(executable)}
         if sys.platform == "darwin":
             bundle = next((parent for parent in executable.parents if parent.suffix == ".app"), None)

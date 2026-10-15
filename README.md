@@ -264,6 +264,8 @@ is cached, BlueLCMS also primes GNOME's standard thumbnail cache for the origina
 file. Remote thumbnail requests are subject to Nautilus's remote-preview policy.
 Log out and back in (or restart Files) after installing so it reloads MIME and
 thumbnailer registrations.
+Linux in-app package updates rerun the installer to keep these registrations
+current as well.
 
 For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The

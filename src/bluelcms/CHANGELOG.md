@@ -3,6 +3,11 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev16
+
+- Fixed Linux package updates skipping `install.sh`; in-app updates now refresh
+  the desktop launcher, MIME database, and Nautilus thumbnailer registration.
+
 ## 1.0.2.dev15
 
 - Added cached chromatogram PNG previews at 128, 256, and 512 px with nearest

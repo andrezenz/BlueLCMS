@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-prefix="${HOME}/.local"
+prefix="${BLUELCMS_INSTALL_PREFIX:-${HOME}/.local}"
 mkdir -p "${prefix}/bin" "${prefix}/share/applications" "${prefix}/share/icons/hicolor/scalable/apps" "${prefix}/share/thumbnailers" "${prefix}/share/mime/packages"
 rm -rf "${prefix}/share/BlueLCMS"
 cp -R BlueLCMS "${prefix}/share/BlueLCMS"
