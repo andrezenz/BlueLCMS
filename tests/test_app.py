@@ -385,7 +385,7 @@ def test_dad_heatmap_sensitivity_palette_and_persistence(tmp_path, monkeypatch):
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     matrix = np.array([[0., 1.], [2., 100.]])
-    assert heatmap_levels(matrix, 75) == pytest.approx((0.0, 75.0))
+    assert heatmap_levels(matrix, 75) == pytest.approx((0.0, 26.5))
     window = MainWindow()
     try:
         window.runs["heatmap"] = Run((
@@ -398,7 +398,7 @@ def test_dad_heatmap_sensitivity_palette_and_persistence(tmp_path, monkeypatch):
         window.heatmap_sensitivity.setValue(75)
         window.heatmap_palette.setCurrentIndex(window.heatmap_palette.findData("inferno"))
         image = next(item for item in window.uv.items() if isinstance(item, pg.ImageItem))
-        assert image.getLevels()[1] == pytest.approx(75.0)
+        assert image.getLevels()[1] == pytest.approx(26.5)
         assert settings.dad_heatmap_palette() == "inferno"
         window.heatmap_palette.setCurrentIndex(window.heatmap_palette.findData("grey"))
         image = next(item for item in window.uv.items() if isinstance(item, pg.ImageItem))

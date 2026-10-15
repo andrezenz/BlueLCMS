@@ -35,11 +35,18 @@ def heatmap_reference_span(matrix):
     return max(maximum if maximum > 0 else float(np.abs(finite).max()), 1e-12)
 
 
-def heatmap_levels(matrix, range_percent, baseline=0.0, reference_span=None):
-    """A continuous color-range width plus an independent absorption offset."""
-    span = heatmap_reference_span(matrix) if reference_span is None else reference_span
-    width = max(span * range_percent / 100, 1e-12)
-    return float(baseline), float(baseline) + width
+def heatmap_levels(matrix, sensitivity_percentile, baseline=0.0, reference_span=None):
+    """Map zero absorption to white and clip high values at the chosen percentile."""
+    values = np.asarray(matrix, dtype=float)
+    finite = values[np.isfinite(values)] if values.size else np.array([])
+    if finite.size:
+        upper = float(np.percentile(finite, sensitivity_percentile))
+    else:
+        upper = float(baseline) + 1.0
+    upper += float(baseline)
+    if upper <= baseline:
+        upper = float(baseline) + 1.0
+    return float(baseline), upper
 
 
 def dad_heatmap_colormap(palette):
