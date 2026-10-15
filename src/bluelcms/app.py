@@ -753,6 +753,8 @@ class MainWindow(QMainWindow):
         registration_error = ensure_thumbnailer_registered()
         if isinstance(registration_error, Exception):
             self.statusBar().showMessage(f"Could not register Linux file thumbnails: {registration_error}")
+        elif registration_error:
+            self.statusBar().showMessage("BlueLCMS thumbnails registered; restart Files to clear old thumbnail failures.", 15000)
         self.check_packaged_release()
         if settings.cache_folder() is None:
             answer = QMessageBox.question(self, "No cache folder configured",

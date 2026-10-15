@@ -267,6 +267,8 @@ thumbnailer registrations.
 Linux in-app package updates rerun the installer to keep these registrations
 current. The app also checks and installs its per-user thumbnailer registration
 at startup, which migrates users upgrading from packages with an older updater.
+On migration it clears old failed-thumbnail records for BlueLCMS measurements
+and requests a Files restart so the refreshed MIME/thumbnailer setup is reloaded.
 
 For DAD-enabled mzML files, the UV trace appears progressively as spectra are
 decoded. The title shows **(streaming)** until the full run is ready. The

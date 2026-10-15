@@ -3,11 +3,19 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
-## 1.0.2.dev17
+## 1.0.2.dev18
 
 - Added a startup migration that installs the Linux MIME and Nautilus thumbnailer
   registration. This supports upgrades from older packages whose updater only
   replaced app files and skipped `install.sh`.
+- Cleared GNOME's remembered failed thumbnail records for mzML/cache files during
+  migration, so Files retries previews it rejected before registration.
+- Cleared GNOME's cached thumbnail failures for mzML and BlueLCMS cache files when
+  the thumbnailer registration changes, so Files retries earlier failed previews.
+- Asked users to restart Files after startup migration so it reloads the updated
+  MIME and thumbnailer registration.
+
+## 1.0.2.dev17
 
 ## 1.0.2.dev16
 
