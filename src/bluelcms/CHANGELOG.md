@@ -1,3 +1,7 @@
+## 1.0.2.dev24
+
+- Made PuBu the default DAD heatmap palette, with zero-baseline absorption sensitivity, interactive drag zoom, double-click reset, and shift-wheel baseline adjustment.
+
 # BlueLCMS changelog
 
 Versions use Python's development-version notation in the app (for example,
