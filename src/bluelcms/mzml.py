@@ -230,7 +230,7 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
     temporary = path.with_name(f".{path.name}.part")
     dad = _pack_scans(run.dad, "wavelength") if run.dad else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
     ms = _pack_scans(run.scans, "mz") if run.scans else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
-    from .thumbnails import PREVIEW_SIZES, render_preview
+    from .thumbnails import PREVIEW_FORMAT, PREVIEW_SIZES, render_preview
     previews = {size: render_preview(run, size) for size in PREVIEW_SIZES}
     payload = {
         "source_metadata": np.array(source_metadata),
@@ -238,6 +238,7 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
         "tic_polarity": np.asarray([polarity for _, _, polarity in run.tic]),
         "auxiliary_names": np.asarray([trace.name for trace in run.auxiliary]),
         "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
+        "preview_format": np.array(PREVIEW_FORMAT),
         **{f"preview_{size}": np.frombuffer(content, dtype=np.uint8) for size, content in previews.items()},
         "dad_times": np.asarray([scan.time for scan in run.dad]), "dad_shared": dad["shared"], "dad_axis": dad["axis"], "dad_intensity": dad["intensity"],
         "ms_times": np.asarray([scan.time for scan in run.scans]), "ms_polarity": np.asarray([scan.polarity for scan in run.scans]), "ms_shared": ms["shared"], "ms_axis": ms["axis"], "ms_intensity": ms["intensity"],
@@ -269,9 +270,11 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
 
 
 def cache_has_previews(path: Path) -> bool:
+    from .thumbnails import PREVIEW_FORMAT
     try:
         with np.load(path, allow_pickle=False) as data:
-            return all(f"preview_{size}" in data for size in (128, 256, 512))
+            return ("preview_format" in data and int(data["preview_format"]) == PREVIEW_FORMAT
+                    and all(f"preview_{size}" in data for size in (128, 256, 512)))
     except (OSError, ValueError, KeyError):
         return False
 

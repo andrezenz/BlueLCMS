@@ -3,6 +3,13 @@
 Versions use Python's development-version notation in the app (for example,
 `1.0.2.dev4`) and GitHub prerelease tags (for example, `v1.0.2-dev.4`).
 
+## 1.0.2.dev20
+
+- Increased cached and headless thumbnail trace width and switched to a light
+  background with darker blue, green, and red trace colors.
+- Versioned embedded previews so opening an older compact cache regenerates its
+  PNG sidecars and standard desktop thumbnails in the updated style.
+
 ## 1.0.2.dev19
 
 - Fixed Nautilus thumbnailing of compact `.npz` caches: detect the archive by

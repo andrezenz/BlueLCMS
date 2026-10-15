@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 PREVIEW_SIZES = (128, 256, 512)
+PREVIEW_FORMAT = 2
 PREVIEW_COLORS = {"uv": "#1769aa", "+": "#187a45", "-": "#b52f36"}
 
 
@@ -192,7 +193,8 @@ def cached_preview(path, size):
         size = min(PREVIEW_SIZES, key=lambda candidate: abs(candidate - size))
     with np.load(path, allow_pickle=False) as data:
         key = f"preview_{size}"
-        if key in data:
+        preview_format = int(data["preview_format"]) if "preview_format" in data else 1
+        if key in data and preview_format == PREVIEW_FORMAT:
             return data[key].tobytes()
     from .mzml import load_compact_cache
     return render_preview(load_compact_cache(path), size)

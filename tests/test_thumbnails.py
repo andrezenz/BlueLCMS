@@ -80,6 +80,21 @@ def test_backfill_preview_files_for_existing_cache(tmp_path):
     assert len(load_compact_cache(cache).dad) == 2
 
 
+def test_old_cache_preview_format_is_detected_and_upgraded(tmp_path):
+    original = write_compact_cache(sample_run(), tmp_path / "original.bluelcms.npz")
+    outdated = tmp_path / "old-format.bluelcms.npz"
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(outdated, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for name in source.namelist():
+            if name != "preview_format.npy":
+                target.writestr(name, source.read(name))
+    assert not cache_has_previews(outdated)
+    run = load_compact_cache(outdated)
+    write_compact_cache(run, outdated)
+    assert cache_has_previews(outdated)
+    with np.load(outdated, allow_pickle=False) as data:
+        assert int(data["preview_format"]) == 2
+
+
 def test_headless_thumbnailer_generates_from_mzml_and_embedded_cache(tmp_path):
     source = write_mzml(tmp_path / "source.mzML")
     cache = write_compact_cache(__import__("bluelcms.mzml", fromlist=["load_run"]).load_run(source), tmp_path / "cached.bluelcms.npz")
