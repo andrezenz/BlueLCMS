@@ -1,3 +1,7 @@
+## 1.0.2.dev30
+
+- Clicking a DAD or UV trace time now pins the UV spectrum and displays the corresponding positive and negative MS spectra at that time.
+
 ## 1.0.2.dev29
 
 - Reduced memory growth by sharing loaded array axes, releasing compact-load copies, and prompting native/Python release of unused measurements.

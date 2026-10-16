@@ -503,6 +503,7 @@ class MainWindow(QMainWindow):
         self.uv.view.reset_requested.connect(self.reset_heatmap_zoom)
         self.uv.heatmap_cursor_moved.connect(self.update_live_uv_spectrum_at_cursor)
         self.uv.heatmap_clicked.connect(self.select_dad_heatmap_time)
+        self.uv.uv_clicked.connect(self.select_uv_trace_time)
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
@@ -822,8 +823,8 @@ class MainWindow(QMainWindow):
     def show_uv_spectrum_at_cursor(self):
         self.set_uv_spectrum_at_cursor(True)
 
-    def update_live_uv_spectrum_at_cursor(self, time):
-        if not settings.uv_spectrum_at_cursor():
+    def update_live_uv_spectrum_at_cursor(self, time, force=False):
+        if not force and not settings.uv_spectrum_at_cursor():
             return
         if not self.uv_spectrum_dock.isVisible():
             return
@@ -867,8 +868,23 @@ class MainWindow(QMainWindow):
             self.calculate_region()
         except Exception:  # Keep clicks from aborting the view.
             pass
-        self.update_live_uv_spectrum_at_cursor(time)
         self.uv_spectrum_dock.show()
+        self.update_live_uv_spectrum_at_cursor(time, force=True)
+        self.statusBar().showMessage(f"UV and MS spectra at {time:.3f} min")
+
+    def select_uv_trace_time(self, time):
+        if not self.runs:
+            return
+        self.uv.heatmap_cursor.setPos(time)
+        self.uv.heatmap_cursor.show()
+        self.uv.region.setRegion((time, time))
+        try:
+            self.timer.stop()
+            self.calculate_region()
+        except Exception:
+            pass
+        self.uv_spectrum_dock.show()
+        self.update_live_uv_spectrum_at_cursor(time, force=True)
         self.statusBar().showMessage(f"UV and MS spectra at {time:.3f} min")
 
     def handle_dad_heatmap_click(self, time):

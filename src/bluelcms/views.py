@@ -118,6 +118,8 @@ class UVPlot(pg.PlotWidget):
     integrate_requested = Signal()
     heatmap_cursor_moved = Signal(float)
     heatmap_clicked = Signal(float)
+    clicked = Signal(float)
+    uv_clicked = Signal(float)
     def __init__(self):
         self.view = RegionViewBox()
         super().__init__(viewBox=self.view)
@@ -175,6 +177,13 @@ class UVPlot(pg.PlotWidget):
             self.heatmap_cursor.setPos(pos.x())
             self.heatmap_cursor.show()
             self.heatmap_clicked.emit(float(pos.x()))
+        elif (event.button() == Qt.MouseButton.LeftButton
+              and hasattr(self, "uv_clicked")):
+            pos = self.view.mapToView(event.pos())
+            self.heatmap_cursor.setPos(pos.x())
+            self.heatmap_cursor.show()
+            self.uv_clicked.emit(float(pos.x()))
+            self.clicked.emit(float(pos.x()))
         super().mousePressEvent(event)
 
     def move_heatmap_cursor(self, position):
