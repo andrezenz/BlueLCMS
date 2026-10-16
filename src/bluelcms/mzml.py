@@ -219,7 +219,7 @@ def _unpack_scans(data, prefix: str, times, constructor, extra=None):
     if shared:
         axis = data[f"{prefix}_axis"]
         values = data[f"{prefix}_intensity"]
-        return tuple(constructor(time, axis.copy(), intensity, *(() if extra is None else (extra[index],))) for index, (time, intensity) in enumerate(zip(times, values)))
+        return tuple(constructor(time, axis, intensity, *(() if extra is None else (extra[index],))) for index, (time, intensity) in enumerate(zip(times, values)))
     offsets, axes, values = data[f"{prefix}_offsets"], data[f"{prefix}_axis"], data[f"{prefix}_intensity"]
     return tuple(constructor(time, axes[offsets[index]:offsets[index + 1]], values[offsets[index]:offsets[index + 1]], *(() if extra is None else (extra[index],))) for index, time in enumerate(times))
 

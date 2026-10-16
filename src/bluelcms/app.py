@@ -1,5 +1,6 @@
 """Standalone Qt desktop entry point."""
 
+import gc
 import os
 import json
 import shutil
@@ -1313,6 +1314,7 @@ class MainWindow(QMainWindow):
         self.start_next_load(update_display=False)
         self.draw_uv(); self.timer.start()
         self.apply_external_view()
+        self.release_memory()
 
     def open_external(self, request):
         if self.pending_discoveries:
@@ -1445,11 +1447,23 @@ class MainWindow(QMainWindow):
             self.set_loading(path in selected)
             job.resume()
 
+    def release_memory(self):
+        gc.collect()
+        try:
+            ctypes = __import__("ctypes")
+            libc = ctypes.CDLL(None)
+            malloc_trim = getattr(libc, "malloc_trim", None)
+            if malloc_trim is not None:
+                malloc_trim(0)
+        except (OSError, AttributeError, TypeError):
+            pass
+
     def finish_load(self, path):
         self.set_download_state(path, False)
         self.stream_uv.pop(path, None); self.stream_tic.pop(path, None)
         if path == self.active_load:
             self.active_load = None
+        self.release_memory()
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
         self.start_next_load(update_display=path in selected)
 

@@ -248,7 +248,7 @@ def load_advion_index(path: Path) -> AdvionScanIndex:
         raise ValueError(f"Advion mass axis has {len(masses)} points but {expected} samples per scan are declared")
     scans = root.findall("scan")
     times = np.asarray([float(scan.findtext("time")) / 60 for scan in scans], dtype=np.float32)
-    tic = np.asarray([float(scan.findtext("tic")) for scan in scans], dtype=np.float64)
+    tic = np.asarray([float(scan.findtext("tic")) for scan in scans], dtype=np.float32)
     if not len(times):
         raise ValueError(f"Advion data file contains no scans: {path}")
     if np.any(np.diff(times) < 0):
@@ -308,7 +308,7 @@ def load_advion_uv(path: Path) -> AdvionUvTrace:
     if not entries:
         raise ValueError(f"Advion UV channel is empty: {path}")
     times = np.asarray([float(entry.findtext("time")) / 60 for entry in entries], dtype=np.float32)
-    intensity = np.asarray([float(entry.findtext("value")) for entry in entries], dtype=np.float64)
+    intensity = np.asarray([float(entry.findtext("value")) for entry in entries], dtype=np.float32)
     order = np.argsort(times, kind="stable")
     return AdvionUvTrace(root.findtext("name") or "UV Scan", times[order], intensity[order])
 

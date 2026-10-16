@@ -1,3 +1,7 @@
+## 1.0.2.dev29
+
+- Reduced memory growth by sharing loaded array axes, releasing compact-load copies, and prompting native/Python release of unused measurements.
+
 ## 1.0.2.dev28
 
 - Allowed the live UV spectrum cursor tool to work in ordinary UV trace mode as well as DAD heatmap mode.
