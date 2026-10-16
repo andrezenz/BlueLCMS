@@ -96,6 +96,19 @@ class RegionViewBox(ResetViewBox):
             event.accept()
             self.heatmap_wheel.emit(event.delta(), bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
             return
+        delta = event.angleDelta().y() if hasattr(event, "angleDelta") else event.delta()
+        if not delta:
+            delta = event.angleDelta().x() if hasattr(event, "angleDelta") else 0
+        if delta:
+            event.accept()
+            low, high = self.viewRange()[1]
+            if low != 0:
+                low = min(low, 0.0)
+            if high == 0:
+                high = 1.0
+            factor = 0.9 ** (delta / 120)
+            self.setYRange(0, high * factor, padding=0)
+            return
         super().wheelEvent(event, axis)
 
     def mouseDragEvent(self, event, axis=None):

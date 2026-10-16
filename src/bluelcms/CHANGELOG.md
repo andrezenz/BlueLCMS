@@ -1,3 +1,7 @@
+## 1.0.2.dev31
+
+- Made scrolling over the UV trace plot zoom the y-axis while keeping zero fixed.
+
 ## 1.0.2.dev30
 
 - Clicking a DAD or UV trace time now pins the UV spectrum and displays the corresponding positive and negative MS spectra at that time.
