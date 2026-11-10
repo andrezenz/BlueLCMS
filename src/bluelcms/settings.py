@@ -80,6 +80,16 @@ def set_show_tic(show: bool, polarity=None) -> None:
     settings().setValue(key, show)
 
 
+def show_mass_spectrum(polarity: str) -> bool:
+    key = "show_positive_mass_spectrum" if polarity == "+" else "show_negative_mass_spectrum"
+    return settings().value(key, True, type=bool)
+
+
+def set_show_mass_spectrum(show: bool, polarity: str) -> None:
+    key = "show_positive_mass_spectrum" if polarity == "+" else "show_negative_mass_spectrum"
+    settings().setValue(key, show)
+
+
 def cache_expiry_days() -> int:
     return settings().value("cache_expiry_days", 0, type=int)
 

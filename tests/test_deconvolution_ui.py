@@ -17,12 +17,16 @@ def test_settings_roundtrip_and_validation(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     monkeypatch.setattr(settings, "settings", lambda: preferences)
-    options = DeconvolutionSettings(minimum_mass=5000, maximum_mass=12000, maximum_charge=20)
+    options = DeconvolutionSettings(minimum_mass=5000, maximum_mass=12000, maximum_charge=20,
+                                    maximum_highlighted_species=4)
     settings.set_deconvolution_options(options)
     assert settings.deconvolution_options() == options
     dialog = DeconvolutionDialog(options)
     assert dialog.selected_options() == options
+    assert dialog.fields["maximum_highlighted_species"].value() == 4
     dialog.close()
+    preferences.setValue("deconvolution_options", '{"minimum_mass": 5000}')
+    assert settings.deconvolution_options().maximum_highlighted_species == 7
     preferences.setValue("deconvolution_options", '{"minimum_charge": 0}')
     assert settings.deconvolution_options() == DeconvolutionSettings()
     app.processEvents()
@@ -58,6 +62,55 @@ def test_results_annotations_signal_conservation_and_disable(tmp_path, monkeypat
         assert not window.deconvolution_results
         labels = [item.toPlainText() for item in window.negative.items() if isinstance(item, pg.TextItem)]
         assert not any(label.endswith("-") for label in labels)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_species_highlighting_cap_preserves_results_and_signal(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from bluelcms.deconvolution import ChargeAssignment, Species
+
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    try:
+        path = tmp_path / "mixture.mzML"
+        x = np.arange(500., 1300., 100.)
+        y = np.arange(1., 9.) * 100
+        empty = (np.array([]), np.array([]))
+        window.histograms = {path: {"-": (x, y), "+": empty}}
+        window.negative.setXRange(400, 1400, padding=0)
+        window.deconvolution_button.setChecked(True)
+        species = tuple(Species(6000 + i * 100, "-", (ChargeAssignment(mz, height, i + 2, (i,)),),
+                                height, height / y.sum() * 100, 100)
+                        for i, (mz, height) in enumerate(zip(x, y)))
+        window.deconvolution_results = {path: {"-": species, "+": ()}}
+        window.populate_deconvolution()
+
+        def charge_labels():
+            return {item.toPlainText() for item in window.negative.items()
+                    if isinstance(item, pg.TextItem) and item.toPlainText().endswith("-")}
+
+        def signal():
+            return sum(np.sum(item.opts["height"]) for item in window.negative.items()
+                       if isinstance(item, pg.BarGraphItem))
+
+        window.draw_histograms()
+        assert charge_labels() == {f"{charge}-" for charge in range(3, 10)}
+        assert window.deconvolution_table.rowCount() == 8
+        assert signal() == y.sum()
+        settings.set_deconvolution_options(replace(settings.deconvolution_options(), maximum_highlighted_species=2))
+        window.draw_histograms()
+        assert charge_labels() == {"8-", "9-"}
+        window.deconvolution_table.selectRow(0)
+        assert charge_labels() == {"2-", "9-"}
+        settings.set_deconvolution_options(replace(settings.deconvolution_options(), maximum_highlighted_species=0))
+        window.draw_histograms()
+        assert not charge_labels()
+        assert window.deconvolution_table.rowCount() == 8
+        assert signal() == y.sum()
     finally:
         window.close()
         app.processEvents()

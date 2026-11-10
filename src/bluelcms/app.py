@@ -515,6 +515,7 @@ class MainWindow(QMainWindow):
         self.update_cursor_snapping()
         self.negative.setXLink(self.positive); self.positive.changed.connect(self.schedule_histogram_draw); self.negative.changed.connect(self.schedule_histogram_draw)
         masses = QSplitter(Qt.Orientation.Vertical); masses.addWidget(self.positive); masses.addWidget(self.negative)
+        self.mass_splitter = masses
         plots = QSplitter(Qt.Orientation.Vertical); plots.addWidget(self.uv); plots.addWidget(masses); plots.setSizes([410, 360])
         root = QSplitter(Qt.Orientation.Horizontal); root.addWidget(controls); root.addWidget(plots); root.setStretchFactor(1, 1); root.setSizes([250, 1000]); self.setCentralWidget(root)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.uv_spectrum_dock)
@@ -525,6 +526,18 @@ class MainWindow(QMainWindow):
         action = self.uv_spectrum_action
         menu = self.menuBar().addMenu("Display")
         menu.addAction(action)
+        self.mass_spectrum_actions = {}
+        for polarity, plot, label in (("+", self.positive, "Show positive ion mass spectrum"),
+                                      ("-", self.negative, "Show negative ion mass spectrum")):
+            visible = settings.show_mass_spectrum(polarity)
+            mass_action = QAction(label, self)
+            mass_action.setCheckable(True)
+            mass_action.setChecked(visible)
+            mass_action.toggled.connect(lambda checked, p=polarity: self.set_mass_spectrum_visible(p, checked))
+            self.mass_spectrum_actions[polarity] = mass_action
+            menu.addAction(mass_action)
+            plot.setVisible(visible)
+        self.mass_splitter.setVisible(any(settings.show_mass_spectrum(p) for p in ("+", "-")))
         toolbar.addAction(action)
         self.integration_table = QTableWidget(0, 5)
         self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Wavelength (nm)", "Absolute integral", "% of integrals"))
@@ -666,7 +679,7 @@ class MainWindow(QMainWindow):
             f"{start:.3f}–{end:.3f} min | {count} probable envelope(s). "
             "Signal % is normalized to assigned ion signal per measurement/polarity, not concentration. "
             "Proton-only envelope masses; adducts and isotope identities are not resolved. "
-            "Competing assignments are resolved conservatively; unmatched signal stays gray."
+            "Competing assignments are resolved conservatively; unhighlighted signal stays gray."
             if count else "No supported charge envelopes in this interval. Try adjusting mass/charge limits, tolerance or signal threshold.")
         self.deconvolution_table.resizeColumnsToContents()
 
@@ -675,6 +688,25 @@ class MainWindow(QMainWindow):
         self.deconvolution_highlight = self.deconvolution_rows[row][:3] if 0 <= row < len(self.deconvolution_rows) else None
         if self.histograms:
             self.draw_histograms()
+
+    def visible_deconvolution_species(self, polarity):
+        limit = settings.deconvolution_options().maximum_highlighted_species
+        ranked = [(species.signal, (path, polarity, index))
+                  for path, polarities in self.deconvolution_results.items()
+                  for index, species in enumerate(polarities.get(polarity, ()))]
+        # Selecting a weaker result replaces one of the strongest, never exceeds
+        # the configured cap, and leaves the complete results table available.
+        ranked.sort(key=lambda entry: (entry[1] == self.deconvolution_highlight, entry[0]), reverse=True)
+        return {key for _, key in ranked[:limit]}
+
+    def set_mass_spectrum_visible(self, polarity, visible):
+        settings.set_show_mass_spectrum(visible, polarity)
+        plot = self.positive if polarity == "+" else self.negative
+        plot.setVisible(visible)
+        self.mass_spectrum_actions[polarity].setChecked(visible)
+        self.mass_splitter.setVisible(any(settings.show_mass_spectrum(p) for p in ("+", "-")))
+        if visible:
+            self.schedule_histogram_draw()
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job)
@@ -942,7 +974,7 @@ class MainWindow(QMainWindow):
 
     def set_uv_spectrum_at_cursor(self, enabled):
         settings.set_uv_spectrum_at_cursor(enabled)
-        if hasattr(self, "uv_spectrum_at_cursor_action"):
+        if hasattr(self, "uv_spectrum_action"):
             self.uv_spectrum_action.setChecked(enabled)
         if enabled:
             self.uv_spectrum_dock.show()
@@ -1000,8 +1032,9 @@ class MainWindow(QMainWindow):
             self.calculate_region()
         except Exception:  # Keep clicks from aborting the view.
             pass
-        self.uv_spectrum_dock.show()
-        self.update_live_uv_spectrum_at_cursor(time, force=True)
+        if settings.uv_spectrum_at_cursor():
+            self.uv_spectrum_dock.show()
+            self.update_live_uv_spectrum_at_cursor(time)
         self.statusBar().showMessage(f"UV and MS spectra at {time:.3f} min")
 
     def select_uv_trace_time(self, time):
@@ -1015,8 +1048,9 @@ class MainWindow(QMainWindow):
             self.calculate_region()
         except Exception:
             pass
-        self.uv_spectrum_dock.show()
-        self.update_live_uv_spectrum_at_cursor(time, force=True)
+        if settings.uv_spectrum_at_cursor():
+            self.uv_spectrum_dock.show()
+            self.update_live_uv_spectrum_at_cursor(time)
         self.statusBar().showMessage(f"UV and MS spectra at {time:.3f} min")
 
     def handle_dad_heatmap_click(self, time):
@@ -1938,6 +1972,7 @@ class MainWindow(QMainWindow):
             stacked = {}
             annotations = []
             colors = {(path, pol, species): (color, name) for path, pol, species, color, name in self.deconvolution_rows}
+            visible_species = self.visible_deconvolution_species(polarity)
             for index, (path, result) in enumerate(self.histograms.items()):
                 source_x, source_y = result[polarity]
                 x, y = rebin_histogram(source_x, source_y, bin_width)
@@ -1948,6 +1983,8 @@ class MainWindow(QMainWindow):
                     assigned = np.zeros(len(source_x), dtype=bool)
                     for species_index, species in enumerate(self.deconvolution_results.get(path, {}).get(polarity, ())):
                         key = (path, polarity, species_index)
+                        if key not in visible_species:
+                            continue
                         color, name = colors[key]
                         mask = np.zeros(len(source_x), dtype=bool)
                         for assignment in species.assignments:

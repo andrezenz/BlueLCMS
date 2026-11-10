@@ -23,6 +23,7 @@ class DeconvolutionSettings:
     tolerance: float = 0.2
     minimum_signal_percent: float = 1.0
     minimum_support: int = 3
+    maximum_highlighted_species: int = 7
 
     def __post_init__(self):
         if not all(math.isfinite(value) for value in asdict(self).values()):
@@ -38,6 +39,10 @@ class DeconvolutionSettings:
             raise ValueError("Require at least two supporting states within the charge range.")
         if not 0.001 <= self.tolerance <= 2 or not 0 < self.minimum_signal_percent <= 100:
             raise ValueError("Tolerance must be 0.001–2 Th and signal threshold must be >0–100%.")
+        if (not isinstance(self.maximum_highlighted_species, int)
+                or isinstance(self.maximum_highlighted_species, bool)
+                or not 0 <= self.maximum_highlighted_species <= 100):
+            raise ValueError("Maximum highlighted species must be an integer between 0 and 100.")
 
 
 @dataclass(frozen=True)

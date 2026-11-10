@@ -1,3 +1,9 @@
+## 1.0.2.dev33
+
+- Limited deconvolution coloring and charge labels to the strongest seven species per spectrum by default, with a persistent maximum in deconvolution settings; all species remain in the results list.
+- Fixed UV trace and DAD clicks opening the UV spectrum dock when “UV spectrum at cursor” is disabled.
+- Added persistent Display-menu toggles to show or hide the positive and negative ion mass-spectrum panes independently.
+
 ## 1.0.2.dev32
 
 - Added a Deconvolute toolbar toggle for probable oligonucleotide charge-envelope matching in the selected interval, with right-click mass/charge limits and matching settings.

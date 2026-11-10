@@ -19,7 +19,8 @@ class DeconvolutionDialog(QDialog):
                 ("maximum_charge", "Upper charge magnitude", 1, 100, None, ""),
                 ("tolerance", "Peak-matching tolerance", .001, 2, 3, " Th"),
                 ("minimum_signal_percent", "Minimum peak height", .001, 100, 3, " % of highest peak"),
-                ("minimum_support", "Minimum supporting charge states", 2, 100, None, "")):
+                ("minimum_support", "Minimum supporting charge states", 2, 100, None, ""),
+                ("maximum_highlighted_species", "Maximum highlighted species", 0, 100, None, " per spectrum")):
             field = QSpinBox() if decimals is None else QDoubleSpinBox()
             if decimals is not None:
                 field.setDecimals(decimals)
@@ -28,6 +29,9 @@ class DeconvolutionDialog(QDialog):
             field.setValue(getattr(options, name))
             self.fields[name] = field
             layout.addRow(label, field)
+        self.fields["maximum_highlighted_species"].setToolTip(
+            "Color and label the strongest species in each spectrum (default 7). "
+            "All detected species remain in the results table. Zero disables species coloring and charge labels.")
         note = QLabel("Proton-only envelope mass estimates; not monoisotopic or adduct assignments.\n"
                       "Default tolerance targets unresolved/low-resolution spectra. Native interval\n"
                       "bins are 0.03125 Th; tolerances below that may miss matches.\n"

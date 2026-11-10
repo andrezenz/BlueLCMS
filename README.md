@@ -108,6 +108,11 @@ Dragging across a mass spectrum highlights the proposed horizontal zoom range
 until the mouse is released.
 Hover inside either mass-spectrum plot to show a vertical cursor guideline and
 its m/z coordinate to four decimal places.
+Use **Display → Show positive ion mass spectrum** and **Show negative ion mass
+spectrum** to show or hide either pane independently. These preferences persist
+across restarts; hiding both panes gives the upper plot the available space.
+UV/DAD clicks and interval selection open the UV spectrum dock only when
+**Display → UV spectrum at cursor** is enabled.
 Click a mass spectrum to pin a reference and show guides on both sides for NH₃,
 Na⁺, 2NH₃, 2Na⁺, and NH₃+Na⁺ offsets. NH₃ uses 17.026549 m/z and Na⁺ uses
 22.989221 m/z as literal offsets. Single-offset guides are fainter than the
@@ -178,15 +183,19 @@ Select a retention-time interval, then enable **Deconvolute** at the right end o
 the Display toolbar. The results dock lists probable charge envelopes separately
 for each measurement and polarity, with estimated neutral mass, supporting charge
 states, relative assigned ion signal, and m/z match quality. Click a result row
-to highlight its contribution. Assigned MS bins use the compound's color and small
-labels such as **4−** or **5+**; unassigned signal remains gray. Contributions
+to highlight its contribution. By default, the strongest **seven species per
+mass-spectrum pane** are colored and labeled; every detected species remains in
+the results table. Selecting a weaker result replaces one highlighted species
+without exceeding the limit. Highlighted MS bins use the compound's color and small
+labels such as **4−** or **5+**; other signal remains gray. Contributions
 sharing a display bin are stacked without discarding intensity. Up to 160 visible
 charge labels per polarity are drawn to keep dense spectra responsive. Turning
 the button off restores the ordinary measurement-colored spectra.
 
 Right-click **Deconvolute → Deconvolution settings…** to persist neutral-mass and
-charge-magnitude cutoffs, peak tolerance, minimum peak height, and minimum
-supporting charge states. Defaults are **2,000–30,000 Da**, **2–30 charges**,
+charge-magnitude cutoffs, peak tolerance, minimum peak height, minimum
+supporting charge states, and **Maximum highlighted species** (default **7**;
+set to **0** for no species coloring or charge labels). Defaults are **2,000–30,000 Da**, **2–30 charges**,
 **0.2 Th** tolerance, **1%** minimum peak height, and **three** supporting states.
 At least one adjacent charge pair is required to reduce integer-multiple mass
 aliases. Changing the interval or settings recalculates in the background;
