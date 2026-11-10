@@ -1,3 +1,13 @@
+## 1.0.2
+
+- Added oligonucleotide charge-envelope deconvolution for selected intervals, with configurable mass/charge limits, a relative-signal results list, species-colored MS bins, and charge-state labels. A persistent highlight limit defaults to seven species per spectrum.
+- Added adjustable DAD heatmap palettes, linear absorption scaling, baseline controls, drag zoom, cursor guidelines, and UV spectra at the cursor in heatmap and trace modes.
+- Added time-click spectrum selection, zero-anchored UV intensity scrolling, and persistent Display-menu controls for positive and negative mass-spectrum panes. UV selection respects the UV spectrum visibility preference.
+- Improved extracted TIC controls, mass-cursor snapping, and reference-mass guides for common ion offsets.
+- Added external-program commands, bundled offline help and changelog, and prefilled GitHub bug reports with runtime diagnostics.
+- Added cached chromatogram previews and Linux file-manager thumbnails, with improved desktop registration and new-measurement notifications.
+- Improved measurement sidebar organization, memory release, and development/stable package version handling.
+
 ## 1.0.2.dev33
 
 - Limited deconvolution coloring and charge labels to the strongest seven species per spectrum by default, with a persistent maximum in deconvolution settings; all species remain in the results list.
