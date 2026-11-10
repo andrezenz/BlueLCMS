@@ -11,6 +11,21 @@ def settings() -> QSettings:
     return QSettings("BlueLCMS", "BlueLCMS")
 
 
+def deconvolution_options():
+    import json
+    from .deconvolution import DeconvolutionSettings
+    try:
+        return DeconvolutionSettings(**json.loads(settings().value("deconvolution_options", "{}", type=str)))
+    except (TypeError, ValueError):
+        return DeconvolutionSettings()
+
+
+def set_deconvolution_options(options):
+    import json
+    from dataclasses import asdict
+    settings().setValue("deconvolution_options", json.dumps(asdict(options), allow_nan=False))
+
+
 def data_folder() -> Path | None:
     value = settings().value("data_folder", "", type=str)
     return Path(value) if value else None

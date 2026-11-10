@@ -169,8 +169,44 @@ and are cached without being added to the selected plots.
    the shaded region using its edge handles. Initially the full UV time interval is selected.
 4. The lower plots show positive ions above negative ions. Each bar sums measured MS1 intensities in a **0.1 Th m/z bin** across
    scans in the inclusive selected interval. These are m/z distributions,
-   not neutral-mass deconvolutions. MS2+ spectra and scans lacking polarity or
+    not neutral-mass deconvolutions unless the optional **Deconvolute** analysis is enabled. MS2+ spectra and scans lacking polarity or
    usable time metadata are excluded. Missing polarity data is never guessed.
+
+### Oligonucleotide deconvolution
+
+Select a retention-time interval, then enable **Deconvolute** at the right end of
+the Display toolbar. The results dock lists probable charge envelopes separately
+for each measurement and polarity, with estimated neutral mass, supporting charge
+states, relative assigned ion signal, and m/z match quality. Click a result row
+to highlight its contribution. Assigned MS bins use the compound's color and small
+labels such as **4−** or **5+**; unassigned signal remains gray. Contributions
+sharing a display bin are stacked without discarding intensity. Up to 160 visible
+charge labels per polarity are drawn to keep dense spectra responsive. Turning
+the button off restores the ordinary measurement-colored spectra.
+
+Right-click **Deconvolute → Deconvolution settings…** to persist neutral-mass and
+charge-magnitude cutoffs, peak tolerance, minimum peak height, and minimum
+supporting charge states. Defaults are **2,000–30,000 Da**, **2–30 charges**,
+**0.2 Th** tolerance, **1%** minimum peak height, and **three** supporting states.
+At least one adjacent charge pair is required to reduce integer-multiple mass
+aliases. Changing the interval or settings recalculates in the background;
+superseded results are discarded and queued requests are coalesced.
+
+This is proton-only charge-envelope matching aimed initially at unresolved or
+low-resolution oligonucleotide spectra. The reported mass is an **envelope mass
+estimate**, not a validated monoisotopic or sequence assignment. Sodium/potassium
+adducts and overlapping isotope patterns are not explicitly modeled. Candidate
+envelopes compete for exclusive peaks; uncertain alternatives are not separately
+quantified. The search uses up to 500 detected peaks and 100 seed peaks, and
+reports up to 40 envelopes per measurement/polarity. Sparse/noisy or strongly
+overlapping envelopes can remain unmatched or be assigned incorrectly.
+
+Analysis uses the interval's native **0.03125 Th** MS histogram, not its zoomed
+display bins; zooming does not change results. Very tight tolerances below that
+bin width can miss matches, so this is not an isotope-resolved high-resolution
+deconvolution mode. **Signal (%)** is normalized to assigned ion signal within
+each measurement/polarity, excluding unmatched signal; it is not molar abundance.
+Match quality measures m/z agreement, not identification probability.
 
 ## Display Controls
 

@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
     QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QSlider, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
+from .deconvolution import SPECIES_COLORS, deconvolute_histograms
+from .deconvolution_dialog import DeconvolutionDialog
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
 from .integrations import integrate_trace, load_integrations, save_integrations
 from . import bug_reports, updater
@@ -366,6 +368,12 @@ class MainWindow(QMainWindow):
         self.xic_color_index = 0
         self.xic_results = {}
         self.xic_pending = set()
+        self.deconvolution_results = {}
+        self.deconvolution_token = 0
+        self.deconvolution_running = False
+        self.deconvolution_pending = None
+        self.deconvolution_rows = []
+        self.deconvolution_highlight = None
         self.jobs, self.pool = set(), QThreadPool(self)
         self.pool.setMaxThreadCount(3)
         self.loading_phase = 0; self.loading_timer = QTimer(self); self.loading_timer.setInterval(250); self.loading_timer.timeout.connect(self.animate_loading)
@@ -535,14 +543,138 @@ class MainWindow(QMainWindow):
         self.integration_dock.setWidget(integration_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.integration_dock)
         self.integration_dock.hide()
+        self.deconvolution_button = QToolButton(self)
+        self.deconvolution_button.setText("Deconvolute")
+        self.deconvolution_button.setCheckable(True)
+        self.deconvolution_button.setToolTip("Find probable oligonucleotide charge envelopes in the selected interval.\nRight-click to change mass, charge and peak-matching settings.")
+        self.deconvolution_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.deconvolution_button.customContextMenuRequested.connect(self.deconvolution_menu)
+        self.deconvolution_button.toggled.connect(self.toggle_deconvolution)
+        toolbar.addWidget(self.deconvolution_button)
+        self.deconvolution_table = QTableWidget(0, 7)
+        self.deconvolution_table.setHorizontalHeaderLabels(("Species", "Measurement", "Polarity", "Neutral mass (Da)", "Signal (%)", "Charges", "Match quality (%)"))
+        self.deconvolution_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.deconvolution_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.deconvolution_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.deconvolution_table.itemSelectionChanged.connect(self.highlight_deconvolution)
+        self.deconvolution_note = QLabel("Select an interval to find probable charge envelopes.")
+        self.deconvolution_note.setWordWrap(True)
+        panel = QWidget(); layout = QVBoxLayout(panel)
+        layout.addWidget(self.deconvolution_note); layout.addWidget(self.deconvolution_table)
+        self.deconvolution_dock = QDockWidget("Oligonucleotide deconvolution", self)
+        self.deconvolution_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.deconvolution_dock)
+        self.deconvolution_dock.hide()
         self.timer = QTimer(self); self.region_timer = self.timer; self.timer.setSingleShot(True); self.timer.setInterval(120); self.timer.timeout.connect(self.calculate_region)
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
+        self.uv.region.sigRegionChanged.connect(self.invalidate_interval_deconvolution)
         self.uv.integrate_requested.connect(self.integrate_region)
         self.statusBar().showMessage("Choose an mzML folder from Settings.")
         if self.folders or settings.cache_folder(): self.refresh_files()
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
         if removed:
             self.statusBar().showMessage(f"Removed {removed} expired cache file(s)")
+
+    def deconvolution_menu(self, position):
+        menu = QMenu(self)
+        action = menu.addAction("Deconvolution settings…")
+        if menu.exec(self.deconvolution_button.mapToGlobal(position)) == action:
+            self.configure_deconvolution()
+
+    def configure_deconvolution(self):
+        dialog = DeconvolutionDialog(settings.deconvolution_options(), self)
+        if dialog.exec():
+            settings.set_deconvolution_options(dialog.selected_options())
+            self.invalidate_deconvolution()
+            if self.deconvolution_button.isChecked():
+                self.calculate_region()
+
+    def toggle_deconvolution(self, enabled):
+        self.invalidate_deconvolution()
+        self.deconvolution_dock.setVisible(enabled)
+        if enabled:
+            self.calculate_region()
+
+    def invalidate_interval_deconvolution(self):
+        self.region_token += 1
+        self.invalidate_deconvolution()
+
+    def invalidate_deconvolution(self):
+        self.deconvolution_token += 1
+        self.deconvolution_pending = None
+        self.deconvolution_results = {}
+        self.deconvolution_rows = []
+        self.deconvolution_highlight = None
+        self.deconvolution_table.setRowCount(0)
+        self.deconvolution_note.setText("Select an interval with MS1 data; waiting for interval spectra.")
+        if self.histograms:
+            self.draw_histograms()
+
+    def request_deconvolution(self):
+        if not self.deconvolution_button.isChecked():
+            return
+        self.deconvolution_token += 1
+        # Only one worker plus the newest pending request: rapid dragging cannot
+        # enqueue an unbounded number of analyses retaining old interval arrays.
+        self.deconvolution_pending = (self.deconvolution_token, dict(self.histograms), settings.deconvolution_options())
+        self.deconvolution_note.setText("Finding probable charge envelopes…")
+        self.start_deconvolution()
+
+    def start_deconvolution(self):
+        if self.deconvolution_running or self.deconvolution_pending is None:
+            return
+        token, histograms, options = self.deconvolution_pending
+        self.deconvolution_pending = None
+        self.deconvolution_running = True
+
+        def ready(completed, result, error):
+            self.deconvolution_running = False
+            if completed == self.deconvolution_token and self.deconvolution_button.isChecked():
+                if error:
+                    self.deconvolution_note.setText(f"Deconvolution failed: {error}")
+                else:
+                    self.deconvolution_results = result
+                    self.populate_deconvolution()
+                    self.draw_histograms()
+            self.start_deconvolution()
+
+        self.submit(token, deconvolute_histograms, ready, histograms, options)
+
+    def populate_deconvolution(self):
+        self.deconvolution_rows = []
+        self.deconvolution_table.setRowCount(0)
+        for path, polarities in self.deconvolution_results.items():
+            for polarity, species in polarities.items():
+                for index, result in enumerate(species):
+                    row = len(self.deconvolution_rows)
+                    color = (SPECIES_COLORS[row] if row < len(SPECIES_COLORS)
+                             else QColor.fromHsv(round(row * 137.508) % 360, 175, 235).name())
+                    name = f"Compound {row + 1}"
+                    self.deconvolution_rows.append((path, polarity, index, color, name))
+                    self.deconvolution_table.insertRow(row)
+                    measurement = path.name if isinstance(path, Path) else path.label
+                    values = (name, measurement, polarity, f"{result.mass:.2f}", f"{result.relative_abundance:.1f}",
+                              ", ".join(f"{a.charge}{polarity}" for a in result.assignments), f"{result.quality:.1f}")
+                    for column, value in enumerate(values):
+                        item = QTableWidgetItem(value)
+                        item.setForeground(QColor(color))
+                        item.setToolTip("Proton-only envelope estimate. Match quality measures m/z agreement, not identification probability.")
+                        self.deconvolution_table.setItem(row, column, item)
+        count = len(self.deconvolution_rows)
+        start, end = self.uv.region.getRegion()
+        self.deconvolution_note.setText(
+            f"{start:.3f}–{end:.3f} min | {count} probable envelope(s). "
+            "Signal % is normalized to assigned ion signal per measurement/polarity, not concentration. "
+            "Proton-only envelope masses; adducts and isotope identities are not resolved. "
+            "Competing assignments are resolved conservatively; unmatched signal stays gray."
+            if count else "No supported charge envelopes in this interval. Try adjusting mass/charge limits, tolerance or signal threshold.")
+        self.deconvolution_table.resizeColumnsToContents()
+
+    def highlight_deconvolution(self):
+        row = self.deconvolution_table.currentRow()
+        self.deconvolution_highlight = self.deconvolution_rows[row][:3] if 0 <= row < len(self.deconvolution_rows) else None
+        if self.histograms:
+            self.draw_histograms()
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job)
@@ -1139,6 +1271,7 @@ class MainWindow(QMainWindow):
         self.files.set_roots(self.folders)
         if not background:
             self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide()
+            self.invalidate_deconvolution()
         self.folder_token += 1
         if not self.folders and settings.cache_folder() is None:
             self.folder_label.setText("Add mzML locations in Settings")
@@ -1320,6 +1453,7 @@ class MainWindow(QMainWindow):
         self.stream_uv = {p: self.stream_uv.get(p, []) for p in paths if p not in self.runs}
         self.stream_tic = {p: self.stream_tic.get(p, []) for p in paths if p not in self.runs}
         self.histograms.clear(); self.region_token += 1
+        self.invalidate_deconvolution()
         self.uv.integration_enabled = len(paths) == 1 and paths[0] in self.runs
         self.refresh_integrations()
         missing = [p for p in paths if p not in self.runs and p not in self.failed_loads and p != self.active_load]
@@ -1773,6 +1907,7 @@ class MainWindow(QMainWindow):
             if not error: collected[path] = result
             if not pending:
                 self.histograms = collected; self.set_loading(False); self.draw_histograms()
+                self.request_deconvolution()
                 start, end = self.uv.region.getRegion()
                 self.statusBar().showMessage(f"{start:.3f}–{end:.3f} min | MS1 intensity sums | {self.display_bin_width:g} Th display bins")
         for path, run in self.runs.items(): self.submit(self.region_token, mass_histograms, lambda t, r, e, p=path: done(t, r, e, p), run, start, end, NATIVE_BIN_WIDTH)
@@ -1801,15 +1936,49 @@ class MainWindow(QMainWindow):
                 low, high = plot.getViewBox().viewRange()[0]
             bin_width = display_bin_width(low, high, pixels)
             stacked = {}
-            for index, result in enumerate(self.histograms.values()):
-                x, y = rebin_histogram(*result[polarity], bin_width); bx, by, width = pixel_buckets(x, y, low, high, pixels)
+            annotations = []
+            colors = {(path, pol, species): (color, name) for path, pol, species, color, name in self.deconvolution_rows}
+            for index, (path, result) in enumerate(self.histograms.items()):
+                source_x, source_y = result[polarity]
+                x, y = rebin_histogram(source_x, source_y, bin_width)
                 if len(x):
                     plot.data.append((x, y))
-                if len(bx):
-                    base = np.asarray([stacked.get(value, 0) for value in bx])
-                    for value, height in zip(bx, by):
-                        stacked[value] = stacked.get(value, 0) + height
-                    plot.addItem(pg.BarGraphItem(x=bx, y0=base, height=by, width=width, brush=COLORS[index % len(COLORS)], pen=None))
+                groups = []
+                if self.deconvolution_button.isChecked():
+                    assigned = np.zeros(len(source_x), dtype=bool)
+                    for species_index, species in enumerate(self.deconvolution_results.get(path, {}).get(polarity, ())):
+                        key = (path, polarity, species_index)
+                        color, name = colors[key]
+                        mask = np.zeros(len(source_x), dtype=bool)
+                        for assignment in species.assignments:
+                            mask[list(assignment.bins)] = True
+                            annotations.append((assignment, color, name))
+                        assigned |= mask
+                        brush = QColor(color)
+                        if self.deconvolution_highlight is not None and self.deconvolution_highlight != key:
+                            brush.setAlpha(65)
+                        groups.append((mask, brush))
+                    groups.insert(0, (~assigned, "#8795a1"))
+                else:
+                    groups = [(np.ones(len(source_x), dtype=bool), COLORS[index % len(COLORS)])]
+                for mask, brush in groups:
+                    gx, gy = rebin_histogram(source_x[mask], source_y[mask], bin_width)
+                    bx, by, width = pixel_buckets(gx, gy, low, high, pixels)
+                    if len(bx):
+                        base = np.asarray([stacked.get(value, 0) for value in bx])
+                        for value, height in zip(bx, by):
+                            stacked[value] = stacked.get(value, 0) + height
+                        plot.addItem(pg.BarGraphItem(x=bx, y0=base, height=by, width=width, brush=brush, pen=None))
+            visible_annotations = [entry for entry in annotations if low <= entry[0].mz <= high]
+            for assignment, color, name in sorted(visible_annotations, key=lambda entry: -entry[0].intensity)[:160]:
+                if low <= assignment.mz <= high:
+                    label = pg.TextItem(f"{assignment.charge}{polarity}", color=color, anchor=(.5, 1))
+                    font = label.textItem.font(); font.setPointSize(7); label.setFont(font)
+                    bucket_x, _, _ = pixel_buckets(*rebin_histogram(np.array([assignment.mz]), np.array([1.0]), bin_width), low, high, pixels)
+                    height = stacked.get(bucket_x[0], assignment.intensity) if len(bucket_x) else assignment.intensity
+                    label.setPos(assignment.mz, height)
+                    label.setToolTip(f"{name}: {assignment.charge}{polarity}, m/z {assignment.mz:.4f}")
+                    plot.addItem(label)
             if not plot.data: plot.setTitle(f"{title} — no MS1 data in selection")
             self.display_bin_width = bin_width
         self.label_peaks()

@@ -1,3 +1,9 @@
+## 1.0.2.dev32
+
+- Added a Deconvolute toolbar toggle for probable oligonucleotide charge-envelope matching in the selected interval, with right-click mass/charge limits and matching settings.
+- Added a colored results list with neutral-mass estimates and relative assigned signal, matching spectrum-bin colors, and small polarity-aware charge-state labels.
+- Kept deconvolution independent of display zoom, with bounded background calculations and stale-result rejection when the interval changes.
+
 ## 1.0.2.dev31
 
 - Made scrolling over the UV trace plot zoom the y-axis while keeping zero fixed.
