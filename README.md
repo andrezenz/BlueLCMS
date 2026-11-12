@@ -110,7 +110,13 @@ Hover inside either mass-spectrum plot to show a vertical cursor guideline and
 its m/z coordinate to four decimal places.
 Use **Display → Show positive ion mass spectrum** and **Show negative ion mass
 spectrum** to show or hide either pane independently. These preferences persist
-across restarts; hiding both panes gives the upper plot the available space.
+across restarts. A pane appears only when a selected measurement contains actual
+mass scans of that polarity: positive-only LC-MS shows only the positive pane,
+negative-only data shows only the negative pane, and chromatogram/TIC-only data
+shows neither. Selecting several measurements shows the union of their available
+polarities. Automatic hiding does not change your saved menu preferences, and an
+interval without peaks does not hide an otherwise available pane. When neither
+pane is shown, the upper plot receives the available space.
 UV/DAD clicks and interval selection open the UV spectrum dock only when
 **Display → UV spectrum at cursor** is enabled.
 Click a mass spectrum to pin a reference and show guides on both sides for NH₃,
@@ -200,10 +206,13 @@ Channel letters do not identify wavelengths. BlueLCMS keeps labels such as
 **DAD1A**, **DAD1B**, and **DAD1C** and does not assume 250/254/260 nm. For
 chromatogram-only selections the wavelength and DAD heatmap controls are disabled;
 full UV spectra, MS spectra, extracted TICs and mass deconvolution are unavailable.
-The positive/negative pane visibility preferences remain unchanged.
+The mass-spectrum panes are automatically hidden for these chromatogram-only
+measurements, without changing the saved Display-menu visibility preferences.
 
 To integrate, select one measurement and one channel (or **All channels** when
-only one is recorded), drag an interval and use the existing **Integrate** action.
+only one is recorded), drag an interval and click **Integrate interval** in the
+Integration toolbar below the Display toolbar. The right-click **Integrate**
+action remains available inside the selected interval.
 Integration records retain channel identity and signal units; areas are in
 recorded units × minutes, and percentages are calculated separately per recorded
 channel. Integration sidecars are stored locally, not alongside the NAS export.
@@ -425,11 +434,18 @@ unavailable. The requested interval or scan is selected once loading finishes.
 
 ## UV Integrations
 
-With exactly one fully loaded measurement selected, right-click inside the
-shaded UV region and choose **Integrate**. The bottom **UV integrations** panel
-lists its start/stop times, wavelength, absolute trapezoidal integral, and its
-percentage of all listed integrals. Integrals are tied to their selected
-wavelength and can be removed or cleared from the panel.
+The **Integration** toolbar is on its own row below the Display toolbar containing
+MS TIC and Deconvolute. Select exactly one loaded measurement, choose a UV
+wavelength or individual recorded AIA channel, and drag a nonzero interval in the
+chromatogram. Click **Integrate interval**, or right-click inside the shaded
+region and choose **Integrate**. The toolbar reports the active channel/wavelength
+and interval, and disables integration when the selection cannot be integrated.
+
+Use **Show integrations** to open or close the results panel, **Remove selected**
+to delete a selected result row, or **Clear integrations** to remove the current
+measurement's records. The bottom **UV integrations** panel lists start/stop
+times, wavelength or channel name, absolute trapezoidal integral, and relative
+area. AIA percentages are computed separately for each recorded channel.
 
 BlueLCMS does not modify mzML files. It saves records in a
 `.mzML.bluelcms-integrations.json` sidecar beside a writable source. For AFP or

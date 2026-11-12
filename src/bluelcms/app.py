@@ -559,11 +559,11 @@ class MainWindow(QMainWindow):
             mass_action = QAction(label, self)
             mass_action.setCheckable(True)
             mass_action.setChecked(visible)
+            mass_action.setToolTip("Show this pane when a selected measurement contains mass spectra of this polarity.")
             mass_action.toggled.connect(lambda checked, p=polarity: self.set_mass_spectrum_visible(p, checked))
             self.mass_spectrum_actions[polarity] = mass_action
             menu.addAction(mass_action)
-            plot.setVisible(visible)
-        self.mass_splitter.setVisible(any(settings.show_mass_spectrum(p) for p in ("+", "-")))
+        self.update_mass_spectrum_visibility()
         toolbar.addAction(action)
         self.integration_table = QTableWidget(0, 5)
         self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Wavelength (nm)", "Absolute integral", "% of integrals"))
@@ -582,6 +582,24 @@ class MainWindow(QMainWindow):
         self.integration_dock.setWidget(integration_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.integration_dock)
         self.integration_dock.hide()
+        self.integration_toolbar = QToolBar("Integration", self)
+        self.integration_toolbar.setObjectName("IntegrationToolbar")
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.integration_toolbar)
+        self.integrate_action = self.integration_toolbar.addAction("Integrate interval")
+        self.integrate_action.triggered.connect(self.integrate_region)
+        self.show_integrations_action = self.integration_dock.toggleViewAction()
+        self.show_integrations_action.setText("Show integrations")
+        self.integration_toolbar.addAction(self.show_integrations_action)
+        self.integration_toolbar.addSeparator()
+        self.remove_integration_action = self.integration_toolbar.addAction("Remove selected")
+        self.remove_integration_action.triggered.connect(self.remove_integration)
+        self.clear_integrations_action = self.integration_toolbar.addAction("Clear integrations")
+        self.clear_integrations_action.triggered.connect(self.clear_integrations)
+        self.integration_toolbar.addSeparator()
+        self.integration_selection_label = QLabel("Select one measurement and a chromatogram interval.")
+        self.integration_toolbar.addWidget(self.integration_selection_label)
+        self.integration_table.itemSelectionChanged.connect(self.update_integration_actions)
         self.deconvolution_button = QToolButton(self)
         self.deconvolution_button.setText("Deconvolute")
         self.deconvolution_button.setCheckable(True)
@@ -607,7 +625,9 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self); self.region_timer = self.timer; self.timer.setSingleShot(True); self.timer.setInterval(120); self.timer.timeout.connect(self.calculate_region)
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
         self.uv.region.sigRegionChanged.connect(self.invalidate_interval_deconvolution)
+        self.uv.region.sigRegionChanged.connect(self.update_integration_actions)
         self.uv.integrate_requested.connect(self.integrate_region)
+        self.update_integration_actions()
         self.statusBar().showMessage("Choose a measurement folder from Settings.")
         if self.folders or settings.cache_folder(): self.refresh_files()
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
@@ -727,12 +747,22 @@ class MainWindow(QMainWindow):
 
     def set_mass_spectrum_visible(self, polarity, visible):
         settings.set_show_mass_spectrum(visible, polarity)
-        plot = self.positive if polarity == "+" else self.negative
-        plot.setVisible(visible)
         self.mass_spectrum_actions[polarity].setChecked(visible)
-        self.mass_splitter.setVisible(any(settings.show_mass_spectrum(p) for p in ("+", "-")))
+        self.update_mass_spectrum_visibility()
         if visible:
             self.schedule_histogram_draw()
+
+    def update_mass_spectrum_visibility(self):
+        visible_panes = []
+        for polarity, plot in (("+", self.positive), ("-", self.negative)):
+            # Use whole-measurement scan availability, not interval histograms:
+            # selecting a quiet interval should not collapse the plot layout.
+            available = any(any(scan.polarity == polarity and len(scan.mz) and len(scan.intensity)
+                                for scan in run.scans) for run in self.runs.values())
+            visible = bool(available and settings.show_mass_spectrum(polarity))
+            plot.setVisible(visible)
+            visible_panes.append(visible)
+        self.mass_splitter.setVisible(any(visible_panes))
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job)
@@ -1371,6 +1401,8 @@ class MainWindow(QMainWindow):
         if not background:
             self.files.clear(); self.runs.clear(); self.stream_uv.clear(); self.stream_tic.clear(); self.histograms.clear(); self.run_data = None; self.uv.region.hide()
             self.invalidate_deconvolution()
+            self.update_mass_spectrum_visibility()
+            self.refresh_integrations()
         self.folder_token += 1
         if not self.folders and settings.cache_folder() is None:
             self.folder_label.setText("Add measurement locations in Settings")
@@ -1831,6 +1863,47 @@ class MainWindow(QMainWindow):
                     item.setToolTip(f"Integrated channel {channel}; area in {record['unit']}·min")
                 self.integration_table.setItem(row, column, item)
         self.integration_table.resizeColumnsToContents()
+        self.update_integration_actions()
+
+    def update_integration_actions(self):
+        source = self.selected_integration_source()
+        bounds = None
+        description = "Select one loaded measurement."
+        if source is not None:
+            run = self.runs[source]
+            if run.chromatograms:
+                traces = self.selected_chromatograms(run)
+                if len(traces) == 1 and len(traces[0].times) >= 2:
+                    trace = traces[0]
+                    bounds = (float(trace.times[0]), float(trace.times[-1]))
+                    description = trace.name + (f" ({trace.unit})" if trace.unit else "")
+                else:
+                    description = "Choose a single recorded chromatogram channel."
+            else:
+                target = self.wavelength.value()
+                def covers_target(scan):
+                    return len(scan.wavelength) and scan.wavelength.min() <= target <= scan.wavelength.max()
+                first = next((scan for scan in run.dad if covers_target(scan)), None)
+                last = next((scan for scan in reversed(run.dad) if covers_target(scan)), None)
+                if first is not None and last is not None and first.time < last.time:
+                    bounds = (first.time, last.time)
+                    description = f"UV {target} nm"
+                else:
+                    description = "No integratable UV chromatogram at this wavelength."
+        start, stop = sorted(self.uv.region.getRegion())
+        valid = bool(bounds is not None and self.mode.currentText() == "UV traces" and self.uv.region.isVisible()
+                     and bounds[0] <= start < stop <= bounds[1])
+        if bounds is not None:
+            description += f" | {start:.4f}–{stop:.4f} min"
+            if not valid:
+                description += " | Select a nonzero interval within the chromatogram."
+        self.integrate_action.setEnabled(valid)
+        self.integrate_action.setToolTip(description)
+        self.integration_selection_label.setText(description)
+        self.uv.integration_enabled = valid
+        has_records = self.integration_source is not None and bool(self.integrations)
+        self.clear_integrations_action.setEnabled(has_records)
+        self.remove_integration_action.setEnabled(has_records and bool(self.integration_table.selectionModel().selectedRows()))
 
     def integrate_region(self):
         source = self.selected_integration_source()
@@ -1951,9 +2024,11 @@ class MainWindow(QMainWindow):
             if hasattr(plot, "loading") and plot.loading.isVisible(): plot.loading.setText("Loading" + "." * self.loading_phase)
 
     def draw_uv(self):
+        self.update_mass_spectrum_visibility()
         self.update_chromatogram_controls()
         if self.mode.currentText() == "DAD heatmap":
             self.draw_dad_heatmap()
+            self.update_integration_actions()
             return
         self.uv.view.heatmap_mode = False
         self.uv.heatmap_zoom_preview.hide()
@@ -1981,7 +2056,10 @@ class MainWindow(QMainWindow):
         self.uv.showAxis("right", (show_tic or bool(enabled_xics)) and not recorded_only)
         if loading:
             loading_overlay(self.uv, True)
-        if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML/AIA measurements"); return
+        if not self.runs and not self.stream_uv:
+            self.uv.setTitle("UV / DAD — select one or more mzML/AIA measurements")
+            self.update_integration_actions()
+            return
         target = self.wavelength.value()
         all_times = []
         tic_by_polarity = {"+": {}, "-": {}}
@@ -2054,6 +2132,8 @@ class MainWindow(QMainWindow):
             self.last_uv_bounds = bounds
         if loading:
             loading_overlay(self.uv, True)
+
+        self.update_integration_actions()
 
     def calculate_region(self):
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}

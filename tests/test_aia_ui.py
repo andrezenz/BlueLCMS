@@ -36,6 +36,7 @@ def test_multichannel_display_integration_and_offline_reopen(tmp_path, monkeypat
         settle(window, app)
         assert len(window.run_data.chromatograms) == 2
         assert not window.run_data.dad and not window.run_data.scans
+        assert window.mass_splitter.isHidden()
         assert len(window.uv.plotItem.listDataItems()) == 2
         assert all("DAD1" in curve.name() for curve in window.uv.plotItem.listDataItems())
         assert window.uv.getAxis("left").labelUnits == "mAU"
@@ -73,6 +74,7 @@ def test_multichannel_display_integration_and_offline_reopen(tmp_path, monkeypat
         offline.files.setCurrentRow(0)
         settle(offline, app)
         assert len(offline.run_data.chromatograms) == 2
+        assert offline.mass_splitter.isHidden()
         assert len(offline.integrations) == 2
         assert offline.integration_table.item(0, 2).text() == "DAD1B"
     finally:

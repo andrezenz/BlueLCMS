@@ -1,3 +1,9 @@
+## 1.0.3.dev2
+
+- Automatically hide mass-spectrum panes when selected measurements have no scans of the corresponding polarity. Chromatogram-only AIA and TIC-only measurements show no mass panes; saved manual visibility preferences are retained.
+- Added a separate Integration toolbar below Display with interval integration, show-results, remove-selected, and clear actions, plus current wavelength/channel and interval feedback.
+- Enable integration only for a valid nonzero interval on one loaded measurement and one recorded channel or UV wavelength; quiet MS intervals do not change pane visibility.
+
 ## 1.0.3.dev1
 
 - Added Agilent `.AIA` folder and standalone `.cdf` chromatogram discovery, with one sidebar measurement per export, named channel overlays, recorded units, and channel selection.

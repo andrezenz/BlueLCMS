@@ -58,6 +58,10 @@ def test_mass_spectrum_display_actions_persist_independently(tmp_path, monkeypat
     monkeypatch.setattr(settings, "settings", lambda: preferences)
     window = MainWindow()
     try:
+        assert window.mass_splitter.isHidden()
+        window.runs = {tmp_path / "both.mzML": Run((), tuple(
+            Scan(1., polarity, np.array([500.]), np.array([100.])) for polarity in ("+", "-")))}
+        window.draw_uv()
         display = next(action.menu() for action in window.menuBar().actions() if action.text() == "Display")
         assert all(action in display.actions() for action in window.mass_spectrum_actions.values())
         assert all(action.isChecked() for action in window.mass_spectrum_actions.values())
@@ -78,6 +82,10 @@ def test_mass_spectrum_display_actions_persist_independently(tmp_path, monkeypat
     try:
         assert restarted.mass_spectrum_actions["+"].isChecked()
         assert not restarted.mass_spectrum_actions["-"].isChecked()
+        assert restarted.mass_splitter.isHidden()
+        restarted.runs = {tmp_path / "both.mzML": Run((), tuple(
+            Scan(1., polarity, np.array([500.]), np.array([100.])) for polarity in ("+", "-")))}
+        restarted.draw_uv()
         assert not restarted.positive.isHidden()
         assert restarted.negative.isHidden()
         restarted.mass_spectrum_actions["-"].setChecked(True)
@@ -85,3 +93,57 @@ def test_mass_spectrum_display_actions_persist_independently(tmp_path, monkeypat
     finally:
         restarted.close()
         app.processEvents()
+
+
+@pytest.mark.parametrize("polarities", (("+",), ("-",), ("+", "-"), ()))
+def test_panes_follow_available_scan_polarities_not_interval_signal(tmp_path, monkeypatch, polarities):
+    from bluelcms.mzml import load_compact_cache, write_compact_cache
+
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    # Declared TICs do not imply that underlying mass spectra exist.
+    run = Run((), tuple(Scan(1., p, np.array([500.]), np.array([0.])) for p in polarities),
+              tic=((1., 100., "+"), (1., 100., "-")))
+    cache = tmp_path / "sample.bluelcms.npz"
+    write_compact_cache(run, cache)
+    window = MainWindow()
+    try:
+        for candidate in (run, load_compact_cache(cache)):
+            window.runs = {cache: candidate}
+            window.draw_uv()
+            assert window.positive.isHidden() == ("+" not in polarities)
+            assert window.negative.isHidden() == ("-" not in polarities)
+            assert window.mass_splitter.isHidden() == (not polarities)
+            assert all(action.isChecked() for action in window.mass_spectrum_actions.values())
+            window.histograms = {cache: {p: (np.array([]), np.array([])) for p in ("+", "-")}}
+            window.draw_histograms()
+            assert window.positive.isHidden() == ("+" not in polarities)
+            assert window.negative.isHidden() == ("-" not in polarities)
+    finally:
+        window.close(); app.processEvents()
+
+
+def test_union_of_measurements_and_empty_scan_arrays(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    window = MainWindow()
+    try:
+        positive = Run((), (Scan(1., "+", np.array([500.]), np.array([100.])),))
+        negative = Run((), (Scan(1., "-", np.array([500.]), np.array([100.])),))
+        window.runs = {tmp_path / "positive.mzML": positive, tmp_path / "negative.mzML": negative}
+        window.draw_uv()
+        assert not window.positive.isHidden() and not window.negative.isHidden()
+        window.mass_spectrum_actions["+"].setChecked(False)
+        assert window.positive.isHidden() and not window.negative.isHidden()
+        window.runs = {tmp_path / "empty.mzML": Run((), (Scan(1., "+", np.array([]), np.array([])),))}
+        window.draw_uv()
+        assert window.mass_splitter.isHidden()
+        window.runs = {tmp_path / "positive.mzML": positive}
+        window.draw_uv()
+        assert window.mass_splitter.isHidden()  # The saved manual preference wins.
+        window.mass_spectrum_actions["+"].setChecked(True)
+        assert not window.positive.isHidden() and window.negative.isHidden()
+    finally:
+        window.close(); app.processEvents()
