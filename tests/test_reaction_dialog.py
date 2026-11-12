@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPaintDevice
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
@@ -124,6 +125,51 @@ def test_unsaved_collection_cannot_be_closed_on_cancel_or_failed_save(monkeypatc
         monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Save)
         monkeypatch.setattr(dialog, "save", lambda: False)
         assert not dialog.close()
+    finally:
+        dialog.dirty = False; dialog.close(); app.processEvents()
+
+
+def test_individual_integrals_named_compounds_baseline_drag_and_separate_plot(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    collection = kinetics(); collection.integration_mode = "individual"
+    collection.targets = []; collection.ratio_reference = None; collection.internal_standard = None
+    dialog = ReactionCollectionDialog(collection)
+    try:
+        assert not dialog.plot_progress_button.isEnabled()
+        dialog.window_region.setRegion((.5, 1.5))
+        dialog.compound_name.setEditText("A")
+        dialog.integrate_measurement()
+        assert dialog.results_table.rowCount() == 1
+        assert dialog.results[0]["area_percent"] == pytest.approx(100)
+        dialog.samples_table.selectRow(1)
+        dialog.window_region.setRegion((.5, 1.5))
+        dialog.integrate_measurement()
+        dialog.compound_name.setEditText("B")
+        dialog.window_region.setRegion((2.5, 3.5))
+        dialog.integrate_measurement()
+        assert dialog.results_table.rowCount() == 3
+        assert dialog.plot_progress_button.isEnabled()
+        plot = dialog.open_progress_plot()
+        assert plot is not None and plot is not dialog
+        assert len(plot.plot.plotItem.listDataItems()) == 2
+        plot.compounds.item(0).setCheckState(Qt.CheckState.Unchecked)
+        assert len(plot.plot.plotItem.listDataItems()) == 1
+        dialog.samples_table.item(1, 1).setText("7.5")
+        assert 7.5 in plot.plot.plotItem.listDataItems()[0].xData
+        editor = dialog.baseline_editor
+        assert editor.points[0].pos().y() == pytest.approx(16)
+        editor.points[0].setPos(2.5, 15.)
+        editor.points[1].setPos(3.5, 15.)
+        editor.finish_edit()
+        dialog.integrate_measurement()
+        target_b = next(t for t in dialog.collection.targets if t.name == "B")
+        spec = dialog.collection.individual_integrations[("m1", target_b.id)]
+        assert spec.baseline == "manual" and spec.baseline_start == 15.
+        row = next(r for r in dialog.results if r["sample_id"] == "m1" and r["target"] == "B")
+        assert row["area_percent"] == pytest.approx(60)
+        dialog.path = tmp_path / "reaction-individual.zip"
+        assert dialog.save()
+        assert load_collection(dialog.path).individual_integrations[("m1", target_b.id)].baseline_end == 15.
     finally:
         dialog.dirty = False; dialog.close(); app.processEvents()
 

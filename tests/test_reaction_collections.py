@@ -10,7 +10,7 @@ import pytest
 
 from bluelcms.aia import load_aia
 from bluelcms.mzml import Chromatogram, DADScan, Run
-from bluelcms.reaction_collections import (ReactionCollection, ReactionSample, ReactionTarget,
+from bluelcms.reaction_collections import (IndividualIntegration, ReactionCollection, ReactionSample, ReactionTarget,
                                            create_collection, evaluate, integration_curve,
                                            load_collection, save_collection)
 from test_aia import make_aia, write_aia_cdf
@@ -73,6 +73,7 @@ def test_embedded_original_cdf_portable_roundtrip_and_csv(tmp_path):
     assert len(collection.samples[0].originals) == 2
     collection.samples[0].time_min = 15
     collection.targets = [ReactionTarget("a", "Product", "DAD1B", .55, .75)]
+    collection.individual_integrations[("m001", "a")] = IndividualIntegration("DAD1B", .55, .75)
     expected = evaluate(collection)
     path = save_collection(collection, tmp_path / "kinetics.zip")
     with ZipFile(path) as archive:
@@ -163,3 +164,53 @@ def test_optional_csv_chromatograms_are_portable_and_reopenable(tmp_path):
         np.testing.assert_array_equal(csv_data[:, 0], collection.samples[0].channels[0].times)
         np.testing.assert_array_equal(csv_data[:, 1], collection.samples[0].channels[0].values)
     assert evaluate(load_collection(path)) == evaluate(collection)
+
+
+def test_individual_compound_assignments_percentages_manual_baseline_and_roundtrip(tmp_path):
+    collection = kinetics(); collection.integration_mode = "individual"
+    collection.individual_integrations = {
+        ("m0", "a"): IndividualIntegration("DAD1A", .5, 1.5),
+        ("m1", "a"): IndividualIntegration("DAD1A", .5, 1.5),
+        ("m1", "b"): IndividualIntegration("DAD1A", 2.5, 3.5),
+        ("m2", "b"): IndividualIntegration("DAD1A", 2.5, 3.5),
+    }
+    rows = evaluate(collection)
+    assert rows[0]["area_percent"] == pytest.approx(100)
+    assert rows[1]["area"] is None and rows[1]["status"] == "Not integrated"
+    assert rows[2]["area_percent"] == pytest.approx(50)
+    assert rows[3]["area_percent"] == pytest.approx(50)
+    assert rows[-1]["area_percent"] == pytest.approx(100)
+    collection.individual_integrations[("m1", "b")] = IndividualIntegration("DAD1A", 2.5, 3.5, "manual", 15., 15.)
+    rows = evaluate(collection)
+    assert rows[3]["area"] == pytest.approx(3)
+    assert rows[3]["area_percent"] == pytest.approx(60)
+    path = save_collection(collection, tmp_path / "individual.zip")
+    restored = load_collection(path)
+    assert restored.integration_mode == "individual"
+    assert restored.individual_integrations[("m1", "b")].baseline_start == 15.
+    assert evaluate(restored) == rows
+
+
+def test_horizontal_midpoint_and_manual_baselines_are_reproducible():
+    trace = Chromatogram("DAD1A", np.array([0., 1., 2.]), np.array([0., 5., 2.]), "mAU")
+    x, y, baseline = integration_curve(trace, 0, 2)
+    np.testing.assert_array_equal(baseline, [1, 1, 1])
+    assert np.trapezoid(y - baseline, x) == pytest.approx(4)
+    x, y, baseline = integration_curve(trace, 0, 2, "manual", 3, 3)
+    assert np.trapezoid(y - baseline, x) == pytest.approx(0)
+
+
+def test_legacy_collection_defaults_to_common_window_mode(tmp_path):
+    path = save_collection(kinetics(), tmp_path / "legacy.zip")
+    with ZipFile(path) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    manifest["version"] = 1
+    manifest.pop("integration_mode"); manifest.pop("individual_integrations")
+    members["manifest.json"] = json.dumps(manifest).encode()
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    restored = load_collection(path)
+    assert restored.integration_mode == "common"
+    assert evaluate(restored) == evaluate(kinetics())

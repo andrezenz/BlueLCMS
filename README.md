@@ -237,30 +237,45 @@ used. The original files and individual integration sidecars are not modified.
    times, not automatically inferred from injection dates or filenames. Blank
    times retain integrations but omit the measurement from progress plots.
    Duplicate times retain individual replicates without automatic averaging.
-2. **Add target** for each tracked compound, select its recorded channel, and
-   define a common start/end retention-time window. Target names and colors are
-   editable. Select a target to inspect the chromatogram overlays and drag its
-   shaded window. A common retention time is a tracking convention, not proof of
-   compound identity; review the overlays for coelution and retention drift.
-3. Select a measurement and enable **Edit window for selected measurement only**
-   to save a manual retention-window adjustment for that sample/target. **Reset
-   selected measurement to common window** removes the adjustment. The common
-   target window and every actual integration window are retained in the file.
-4. Choose **Integrated area**, **Area fraction (%)**, **Ratio to reference**, or
-   **Internal-standard normalized** for the reaction-progress plot. Set the
-   denominator/reference target in the corresponding selector. Colors identify
-   targets consistently. Missing values leave gaps rather than fabricated zeros.
+2. New collections start in **Integrate measurements individually** mode. Select
+   a measurement and channel, drag the interval limits, and enter **A**, **B**,
+   **C**, **D**, or a custom compound name. Press **Integrate / update compound in
+   selected measurement** to save that measurement/compound assignment. Reusing
+   a name across measurements tracks the same compound; updating replaces that
+   compound's previous integral in the selected measurement. Selecting a result
+   row recalls its measurement, compound, limits and baseline for editing.
+3. The default baseline is **Horizontal midpoint**: a line parallel to the x-axis
+   whose height is `(signal_at_start + signal_at_end) / 2`. Drag either baseline
+   endpoint vertically to choose custom heights (a sloping line is allowed), or
+   horizontally to move its integration limit. The vertical interval handles are
+   draggable as well. Press the integrate/update button to save the edited
+   limits and baseline heights. Saved windows are shaded behind the trace.
+4. **Plot progress…** opens a separate time-versus-integral-% window once a
+   compound has integrals at two distinct assigned reaction times. Check one or
+   more compound names in that window to select the series. Open plots update
+   when reaction times or integrals change. Integral % is calculated from the
+   non-negative assigned areas in the same measurement/channel; unassigned
+   compounds are not silently integrated or treated as zero. Missing values
+   leave gaps rather than fabricated zeros.
 
-The default **Endpoint line** baseline joins the interpolated window endpoints;
-**Zero** is also available per target. Collection integrals are **signed**
+Disable **Integrate measurements individually** to use the earlier common-window
+workflow: **Add target**, choose a channel and common interval, then optionally
+use **Edit window for selected measurement only** for per-sample adjustments.
+Legacy version-1 collections reopen in this common-window mode. The embedded
+preview also offers area, area fraction, reference ratio and internal-standard
+normalization. Target names and colors remain editable in either workflow.
+Retention time alone is not proof of compound identity; review peaks for
+coelution and retention drift before assigning a name.
+
+**Endpoint line** and **Zero** baselines remain available. Collection integrals are **signed**
 trapezoidal areas after baseline subtraction, in signal units × minutes. Negative
 areas are shown and flagged, not flipped positive. Area percentages are within
-each measurement's target channel/unit group and remain blank for incomplete or
+each measurement's assigned channel/unit group and remain blank for failed or
 negative groups. Ratios divide target area by the chosen reference/internal
 standard area and remain blank for missing, non-positive or incompatible-unit
 denominators. These are detector-signal trends, not calibrated concentrations or
-chemical conversion. The ordinary single-measurement integration tool retains
-its existing absolute-area calculation.
+chemical conversion. Single-measurement toolbar integrations also use the
+horizontal-midpoint default, but report absolute baseline-corrected area.
 
 **Save collection…** writes a standard compressed ZIP archive. **Open collection…**
 on the Integration toolbar reopens it independently of source locations or the
@@ -268,7 +283,8 @@ NAS. Collections include:
 
 ```text
 manifest.json          # Versioned metadata, channels, times, targets, overrides,
-                       # baseline methods, references and SHA-256 data checksums
+                       # individual assignments, baseline endpoint heights,
+                       # references and SHA-256 data checksums
 measurements.csv       # Measurement identities, reaction times and provenance
 targets.csv            # Shared target windows, channels, baselines and colors
 integrations.csv       # Actual windows, areas, percentages, ratios and statuses
@@ -294,6 +310,7 @@ the ten newest inspected AIA measurements (14 channels), the normal collection
 with original CDFs was about **0.61 MB**; adding full chromatogram CSVs increases
 the size. Collection data remain available for reintegration after the original
 NAS files are moved, disconnected or re-exported.
+New files use format version 2; version-1 collections remain readable.
 
 ### Oligonucleotide deconvolution
 
@@ -516,6 +533,16 @@ to delete a selected result row, or **Clear integrations** to remove the current
 measurement's records. The bottom **UV integrations** panel lists start/stop
 times, wavelength or channel name, absolute trapezoidal integral, and relative
 area. AIA percentages are computed separately for each recorded channel.
+While the panel is shown, saved intervals on the visible wavelength/channel have
+muted shading in the chromatogram. Selecting a table row makes its interval more
+prominent. Hiding the panel removes these overlays without deleting records.
+
+New integrations subtract a horizontal baseline at the mean signal value of the
+two interval endpoints. Drag the gold baseline points to adjust endpoint heights
+and limits; vertical region handles also adjust the limits. **Reset baseline**
+restores the horizontal-midpoint baseline for the current interval. Press
+**Integrate interval** to save the area with the chosen baseline and its endpoint
+heights. Existing saved integrations keep their recorded areas and metadata.
 
 BlueLCMS does not modify mzML files. It saves records in a
 `.mzML.bluelcms-integrations.json` sidecar beside a writable source. For AFP or

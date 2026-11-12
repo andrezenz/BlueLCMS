@@ -1,3 +1,10 @@
+## 1.0.3.dev5
+
+- Highlight saved UV integrations with muted windows while Show integrations is enabled; selected rows receive a stronger highlight on the corresponding visible wavelength/channel.
+- Added individual collection integration: assign reaction times, integrate each measurement independently, and label areas A/B/C/D or a custom compound name. Plot progress opens a separate integral-% plot with selectable compounds.
+- Default new integrations to a horizontal baseline at the average signal of the two integration limits. Baseline endpoints and limits are draggable, and manual baseline heights are saved with the integral.
+- Added reaction collection format v2 for individual assignments and manual baselines while retaining v1/common-window collection support.
+
 ## 1.0.3.dev4
 
 - Fixed reaction collection creation/display failing during Qt painting because the progress selector shadowed Qt's built-in paint-metrics method.

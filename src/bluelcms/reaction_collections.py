@@ -21,10 +21,11 @@ import numpy as np
 
 from .aia import aia_files, aia_fingerprint, is_aia, read_chromatogram
 from .mzml import Chromatogram
+from .integrations import baseline_curve
 
 
 FORMAT = "bluelcms-reaction-collection"
-VERSION = 1
+VERSION = 2
 COLORS = ("#ef5350", "#42a5f5", "#66bb6a", "#ab47bc", "#ffa726", "#26c6da", "#ec407a")
 
 
@@ -68,8 +69,18 @@ class ReactionTarget:
     channel: str
     start_min: float
     end_min: float
-    baseline: str = "endpoints"
+    baseline: str = "midpoint"
     color: str = COLORS[0]
+
+
+@dataclass
+class IndividualIntegration:
+    channel: str
+    start_min: float
+    end_min: float
+    baseline: str = "midpoint"
+    baseline_start: float | None = None
+    baseline_end: float | None = None
 
 
 @dataclass
@@ -80,6 +91,8 @@ class ReactionCollection:
     overrides: dict[tuple[str, str], tuple[float, float]] = field(default_factory=dict)
     ratio_reference: str | None = None
     internal_standard: str | None = None
+    integration_mode: str = "common"
+    individual_integrations: dict[tuple[str, str], IndividualIntegration] = field(default_factory=dict)
 
     def validate(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -106,7 +119,7 @@ class ReactionCollection:
             if not target.name.strip() or target.channel not in channels:
                 raise ValueError("Each target needs a name and a recorded channel.")
             _window(target.start_min, target.end_min)
-            if target.baseline not in ("endpoints", "zero") or not re.fullmatch(r"#[0-9a-fA-F]{6}", target.color):
+            if target.baseline not in ("midpoint", "endpoints", "zero") or not re.fullmatch(r"#[0-9a-fA-F]{6}", target.color):
                 raise ValueError("Invalid target baseline or color.")
         sample_ids, target_ids = {s.id for s in self.samples}, {t.id for t in self.targets}
         for (sample, target), window in self.overrides.items():
@@ -116,24 +129,26 @@ class ReactionCollection:
         for reference in (self.ratio_reference, self.internal_standard):
             if reference is not None and reference not in target_ids:
                 raise ValueError("The reference target is not in this collection.")
+        if self.integration_mode not in ("common", "individual"):
+            raise ValueError("Unknown collection integration mode")
+        for (sample, target), spec in self.individual_integrations.items():
+            if sample not in sample_ids or target not in target_ids:
+                raise ValueError("An individual integral references an unknown measurement or compound")
+            _window(spec.start_min, spec.end_min)
+            if spec.channel not in channels or spec.baseline not in ("midpoint", "endpoints", "zero", "manual"):
+                raise ValueError("Unknown integration channel or baseline")
+            if spec.baseline == "manual":
+                _number(spec.baseline_start, "Baseline start height")
+                _number(spec.baseline_end, "Baseline end height")
 
 
-def integration_curve(trace, start, end, baseline="endpoints"):
+def integration_curve(trace, start, end, baseline="midpoint", baseline_start=None, baseline_end=None):
     """Interpolate boundary samples and return the recorded and baseline curves."""
     validate_trace(trace)
     start, end = _window(start, end)
     if start < trace.times[0] or end > trace.times[-1]:
         raise ValueError("Window outside recorded chromatogram")
-    inside = (trace.times > start) & (trace.times < end)
-    x = np.r_[start, trace.times[inside], end]
-    y = np.interp(x, trace.times, trace.values)
-    if baseline == "endpoints":
-        base = y[0] + (y[-1] - y[0]) * (x - start) / (end - start)
-    elif baseline == "zero":
-        base = np.zeros(len(x))
-    else:
-        raise ValueError("Unknown baseline method")
-    return x, y, base
+    return baseline_curve(trace.times, trace.values, start, end, baseline, baseline_start, baseline_end)
 
 
 def evaluate(collection):
@@ -148,22 +163,41 @@ def evaluate(collection):
     for sample in collection.samples:
         rows = {}
         for target in collection.targets:
+            spec = collection.individual_integrations.get((sample.id, target.id))
+            assigned = collection.integration_mode == "common" or spec is not None
             start, end = collection.overrides.get((sample.id, target.id), (target.start_min, target.end_min))
-            trace = next((c for c in sample.channels if c.name == target.channel), None)
+            channel, baseline = target.channel, target.baseline
+            if spec is not None:
+                start, end, channel, baseline = spec.start_min, spec.end_min, spec.channel, spec.baseline
+            trace = next((c for c in sample.channels if c.name == channel), None)
             row = dict(sample_id=sample.id, measurement=sample.name, reaction_time_min=sample.time_min,
-                       target_id=target.id, target=target.name, channel=target.channel,
-                       start_min=start, end_min=end, baseline=target.baseline,
+                       target_id=target.id, target=target.name, channel=channel, assigned=assigned,
+                       start_min=start, end_min=end, baseline=baseline,
+                       baseline_start=None if spec is None else spec.baseline_start,
+                       baseline_end=None if spec is None else spec.baseline_end,
                        signal_unit="" if trace is None else trace.unit,
                        area=None, area_percent=None, ratio=None, normalized_area=None, status="ok")
-            if trace is None:
+            if not assigned:
+                row["status"] = "Not integrated"
+            elif trace is None:
                 row["status"] = "Missing channel"
             else:
-                expected = next(c.unit for s in collection.samples for c in s.channels if c.name == target.channel)
+                expected = trace.unit
+                for other in collection.samples:
+                    other_spec = collection.individual_integrations.get((other.id, target.id))
+                    if collection.integration_mode == "individual" and other_spec is None:
+                        continue
+                    other_channel = other_spec.channel if other_spec is not None else target.channel
+                    reference_trace = next((c for c in other.channels if c.name == other_channel), None)
+                    if reference_trace is not None:
+                        expected = reference_trace.unit
+                        break
                 if trace.unit != expected:
                     row["status"] = "Incompatible signal units"
                 else:
                     try:
-                        x, y, base = integration_curve(trace, start, end, target.baseline)
+                        x, y, base = integration_curve(trace, start, end, baseline, row["baseline_start"], row["baseline_end"])
+                        row["baseline_start"], row["baseline_end"] = float(base[0]), float(base[-1])
                         area = float(np.trapezoid(y - base, x))
                         tolerance = 64 * np.finfo(float).eps * max(1., float(np.max(abs(y))), float(np.max(abs(base)))) * (end - start)
                         row["area"] = 0. if abs(area) <= tolerance else area
@@ -178,7 +212,7 @@ def evaluate(collection):
         for row in rows.values():
             if row["area"] is None or row["area"] < 0:
                 continue
-            group = [other for other in rows.values() if other["channel"] == row["channel"]
+            group = [other for other in rows.values() if other["assigned"] and other["channel"] == row["channel"]
                      and other["signal_unit"] == row["signal_unit"]]
             # An incomplete group must not masquerade as a 100% product fraction.
             if all(other["area"] is not None and other["area"] >= 0 for other in group):
@@ -236,7 +270,7 @@ def create_collection(entries, wavelength=254):
             except (OSError, ValueError, KeyError, StopIteration, TypeError):
                 sample.provenance = "Loaded chromatogram arrays; original AIA source unavailable or changed"
         samples.append(sample)
-    collection = ReactionCollection(samples)
+    collection = ReactionCollection(samples, integration_mode="individual")
     collection.validate()
     return collection
 
@@ -249,7 +283,7 @@ def _csv(columns, rows):
 
 
 RESULT_COLUMNS = ("sample_id", "measurement", "reaction_time_min", "target_id", "target", "channel",
-                  "start_min", "end_min", "baseline", "signal_unit", "area", "area_percent", "ratio", "normalized_area", "status")
+                  "start_min", "end_min", "baseline", "baseline_start", "baseline_end", "assigned", "signal_unit", "area", "area_percent", "ratio", "normalized_area", "status")
 
 
 def save_collection(collection, path, include_csv=False):
@@ -259,6 +293,8 @@ def save_collection(collection, path, include_csv=False):
     manifest = dict(format=FORMAT, version=VERSION, name=collection.name, reaction_time_unit="min",
                     retention_time_unit="min", integration_method="signed trapezoidal; interpolated endpoints",
                     chromatogram_csv_copies=bool(include_csv),
+                    integration_mode=collection.integration_mode,
+                    individual_integrations=[dict(sample_id=s, target_id=t, **vars(spec)) for (s, t), spec in collection.individual_integrations.items()],
                     ratio_reference=collection.ratio_reference, internal_standard=collection.internal_standard,
                     targets=[vars(target) for target in collection.targets],
                     overrides=[dict(sample_id=s, target_id=t, start_min=w[0], end_min=w[1]) for (s, t), w in collection.overrides.items()],
@@ -301,11 +337,13 @@ def save_collection(collection, path, include_csv=False):
             archive.writestr("measurements.csv", _csv(("id", "name", "time_min", "source", "provenance"), [vars(s) for s in collection.samples]))
             archive.writestr("targets.csv", _csv(("id", "name", "channel", "start_min", "end_min", "baseline", "color"), [vars(t) for t in collection.targets]))
             archive.writestr("integrations.csv", _csv(RESULT_COLUMNS, results))
-            archive.writestr("README.txt", "BlueLCMS reaction collection, format version 1.\n"
+            archive.writestr("README.txt", "BlueLCMS reaction collection, format version 2 (also reads version 1).\n"
                              "Open CSV tables in Excel/LibreOffice/Python/R after unzipping.\n"
                              "manifest.json is authoritative; opening recalculates integrations.\n"
                              "Reaction and retention times are minutes. Blank time means unassigned.\n"
-                             "Endpoint baseline joins interpolated window endpoints; zero baseline is optional.\n"
+                             "Default midpoint baseline is horizontal at the average signal at the two limits.\n"
+                             "Manual baseline endpoint heights and individual measurement/compound windows are stored in the manifest and integrations.csv.\n"
+                             "Common-window mode, endpoint-line and zero baselines remain supported.\n"
                              "Areas are SIGNED signal-unit * minute integrals. Negative/missing areas are not used in ratios.\n"
                              "Percentages are within each target channel/unit group, not chemical conversion.\n"
                              "ratio = target area / ratio_reference area; normalized_area = target area / internal_standard area.\n"
@@ -325,7 +363,7 @@ def load_collection(path):
         if len(archive.namelist()) != len(set(archive.namelist())):
             raise ValueError("Duplicate collection archive members")
         manifest = json.loads(archive.read("manifest.json"))
-        if manifest.get("format") != FORMAT or manifest.get("version") != VERSION:
+        if manifest.get("format") != FORMAT or manifest.get("version") not in (1, VERSION):
             raise ValueError("Unsupported reaction collection format/version")
         if manifest.get("reaction_time_unit") != "min" or manifest.get("retention_time_unit") != "min":
             raise ValueError("Unsupported collection time units")
@@ -362,7 +400,10 @@ def load_collection(path):
             samples.append(ReactionSample(record["id"], record["name"], record["source"], tuple(channels), record.get("time_min"),
                                           record.get("source_metadata", ""), originals, record.get("provenance", "")))
         overrides = {(r["sample_id"], r["target_id"]): (r["start_min"], r["end_min"]) for r in manifest.get("overrides", [])}
+        individual = {(r["sample_id"], r["target_id"]): IndividualIntegration(**{key: value for key, value in r.items() if key not in ("sample_id", "target_id")})
+                      for r in manifest.get("individual_integrations", [])}
         collection = ReactionCollection(samples, [ReactionTarget(**t) for t in manifest["targets"]], manifest["name"], overrides,
-                                        manifest.get("ratio_reference"), manifest.get("internal_standard"))
+                                        manifest.get("ratio_reference"), manifest.get("internal_standard"),
+                                        manifest.get("integration_mode", "common"), individual)
     collection.validate()
     return collection

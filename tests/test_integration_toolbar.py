@@ -43,7 +43,10 @@ def test_integration_toolbar_aia_channel_interval_and_record_actions(tmp_path, m
         assert "DAD1B" in window.integration_selection_label.text()
         window.integrate_action.trigger()
         assert len(window.integrations) == 1
-        assert window.integrations[0]["absolute_integral"] == pytest.approx(.425)
+        assert window.integrations[0]["absolute_integral"] == pytest.approx(.225)
+        assert window.integrations[0]["baseline"] == "midpoint"
+        assert window.integrations[0]["baseline_start"] == pytest.approx(1)
+        assert window.integrations[0]["baseline_end"] == pytest.approx(1)
         assert window.integrations[0]["channel"] == "DAD1B"
         window.uv.region.setRegion((.5, .6))
         window.integrate_action.trigger()
@@ -88,7 +91,7 @@ def test_toolbar_native_uv_wavelength_heatmap_and_selection_state(tmp_path, monk
         window.uv.region.setRegion((.5, 1.5))
         assert window.integrate_action.isEnabled()
         window.integrate_action.trigger()
-        assert window.integrations[0]["absolute_integral"] == pytest.approx(1.5)
+        assert window.integrations[0]["absolute_integral"] == pytest.approx(.5)
         assert window.integrations[0]["wavelength_nm"] == 254
         window.wavelength.setValue(280)
         assert not window.integrate_action.isEnabled()
@@ -100,5 +103,39 @@ def test_toolbar_native_uv_wavelength_heatmap_and_selection_state(tmp_path, monk
         assert window.integrate_action.isEnabled()
         window.files.clearSelection()
         assert not window.integrate_action.isEnabled()
+    finally:
+        window.close(); app.processEvents()
+
+
+def test_baseline_points_and_limits_can_be_dragged_and_saved(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    preferences = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(settings, "settings", lambda: preferences)
+    monkeypatch.setattr(settings, "integration_folder", lambda: tmp_path / "integrations")
+    settings.set_cache_folder(tmp_path / "cache")
+    source = tmp_path / "offline.mzML"
+    run = Run(tuple(DADScan(time, np.array([254.]), np.array([value]))
+                    for time, value in ((0., 0.), (1., 2.), (2., 0.))), ())
+    write_compact_cache(run, cached_path(source, settings.cache_folder()), cache_metadata(source))
+    window = MainWindow()
+    try:
+        settle(window, app); window.files.setCurrentRow(0); settle(window, app)
+        window.uv.region.setRegion((.5, 1.5))
+        editor = window.uv.baseline_editor
+        assert editor.points[0].pos().y() == 1
+        assert editor.points[1].pos().y() == 1
+        editor.points[0].setPos(.25, 1.25)
+        editor.points[1].setPos(1.75, 1.75)
+        editor.finish_edit()
+        assert window.uv.region.getRegion() == (.25, 1.75)
+        window.integrate_action.trigger()
+        record = window.integrations[0]
+        assert record["baseline"] == "manual"
+        assert record["baseline_start"] == 1.25 and record["baseline_end"] == 1.75
+        assert record["absolute_integral"] == pytest.approx(.375)
+        window.reset_baseline_action.trigger()
+        assert editor.points[0].pos().y() == pytest.approx(.5)
+        window.uv.region.lines[0].setValue(.5)
+        assert editor.points[0].pos().y() == pytest.approx(.75)
     finally:
         window.close(); app.processEvents()

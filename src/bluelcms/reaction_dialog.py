@@ -10,11 +10,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox,
                               QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                              QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
+                              QListWidget, QListWidgetItem, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
                               QVBoxLayout, QWidget)
 
-from .reaction_collections import (COLORS, ReactionTarget, evaluate,
+from .reaction_collections import (COLORS, IndividualIntegration, ReactionTarget, evaluate,
                                    integration_curve, save_collection)
+from .views import BaselineEditor
 
 
 class ReactionCollectionDialog(QDialog):
@@ -25,6 +26,9 @@ class ReactionCollectionDialog(QDialog):
         self.dirty = path is None
         self.updating = True
         self.results = []
+        self.progress_windows = set()
+        self.pending_windows = {}
+        self.pending_baselines = {}
         self.resize(1450, 950)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout = QVBoxLayout(self)
@@ -42,6 +46,9 @@ class ReactionCollectionDialog(QDialog):
         export_csv.setToolTip("Save a portable collection copy with additional time/signal CSVs for every chromatogram (larger file).")
         export_csv.clicked.connect(self.export_csv_copy)
         controls.addWidget(export_csv)
+        self.plot_progress_button = QPushButton("Plot progress…")
+        self.plot_progress_button.clicked.connect(self.open_progress_plot)
+        controls.addWidget(self.plot_progress_button)
         layout.addLayout(controls)
         self.note = QLabel("Assign elapsed reaction times in minutes; acquisition timestamps are not used as reaction times.")
         self.note.setWordWrap(True)
@@ -64,7 +71,31 @@ class ReactionCollectionDialog(QDialog):
         self.samples_table.itemSelectionChanged.connect(self.selection_changed)
         self.samples_table.resizeColumnsToContents()
         left_layout.addWidget(self.samples_table)
-        left_layout.addWidget(QLabel("Tracked targets — common retention-time windows (minutes)"))
+        self.individual_mode = QCheckBox("Integrate measurements individually")
+        self.individual_mode.setChecked(collection.integration_mode == "individual")
+        self.individual_mode.toggled.connect(self.mode_changed)
+        left_layout.addWidget(self.individual_mode)
+        self.individual_controls = QWidget()
+        individual_layout = QHBoxLayout(self.individual_controls)
+        self.individual_channel = QComboBox()
+        self.individual_channel.addItems([c.name for c in collection.samples[0].channels])
+        self.individual_channel.currentIndexChanged.connect(self.selection_changed)
+        self.compound_name = QComboBox(); self.compound_name.setEditable(True)
+        self.compound_name.addItems(list(dict.fromkeys(["A", "B", "C", "D", *[t.name for t in collection.targets]])))
+        self.compound_name.activated.connect(self.choose_compound)
+        self.individual_baseline = QComboBox()
+        for name, value in (("Horizontal midpoint", "midpoint"), ("Endpoint line", "endpoints"), ("Zero", "zero")):
+            self.individual_baseline.addItem(name, value)
+        self.individual_baseline.currentIndexChanged.connect(self.baseline_mode_changed)
+        individual_layout.addWidget(self.individual_channel)
+        individual_layout.addWidget(self.compound_name)
+        individual_layout.addWidget(self.individual_baseline)
+        left_layout.addWidget(self.individual_controls)
+        self.integrate_measurement_button = QPushButton("Integrate / update compound in selected measurement")
+        self.integrate_measurement_button.clicked.connect(self.integrate_measurement)
+        left_layout.addWidget(self.integrate_measurement_button)
+        self.targets_label = QLabel("Tracked targets — common retention-time windows (minutes)")
+        left_layout.addWidget(self.targets_label)
         self.targets_table = QTableWidget(0, 6)
         self.targets_table.setHorizontalHeaderLabels(("Target", "Channel", "Start", "End", "Baseline", "Color"))
         self.targets_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -80,9 +111,9 @@ class ReactionCollectionDialog(QDialog):
         self.edit_sample_window = QCheckBox("Edit window for selected measurement only")
         self.edit_sample_window.toggled.connect(self.selection_changed)
         left_layout.addWidget(self.edit_sample_window)
-        reset = QPushButton("Reset selected measurement to common window")
-        reset.clicked.connect(self.reset_window)
-        left_layout.addWidget(reset)
+        self.reset_window_button = QPushButton("Reset selected measurement to common window")
+        self.reset_window_button.clicked.connect(self.reset_window)
+        left_layout.addWidget(self.reset_window_button)
 
         right = QWidget(); right_layout = QVBoxLayout(right)
         selectors = QHBoxLayout()
@@ -103,6 +134,8 @@ class ReactionCollectionDialog(QDialog):
         self.overlay.showGrid(x=True, y=True, alpha=.2); self.overlay.addLegend()
         self.window_region = pg.LinearRegionItem(brush=(72, 169, 239, 35))
         self.window_region.sigRegionChangeFinished.connect(self.window_changed)
+        self.baseline_editor = BaselineEditor(self.overlay, self.window_region)
+        self.baseline_editor.edited.connect(self.baseline_edited)
         self.progress = pg.PlotWidget(title="Reaction progress")
         self.progress.setLabel("bottom", "Reaction time", units="min")
         self.progress.showGrid(x=True, y=True, alpha=.2); self.progress.addLegend()
@@ -116,12 +149,16 @@ class ReactionCollectionDialog(QDialog):
         self.results_table.setHorizontalHeaderLabels(("Measurement", "Reaction min", "Target", "Window min", "Area", "Area unit", "Area %", "Ratio", "Normalized", "Status"))
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_table.setMaximumHeight(220)
+        self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.results_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.results_table.itemSelectionChanged.connect(self.select_integral)
         layout.addWidget(self.results_table)
         self.render_targets()
         if collection.targets:
             self.targets_table.selectRow(0)
         self.samples_table.selectRow(0)
         self.updating = False
+        self.update_mode_controls()
         self.recalculate()
         self.update_title()
 
@@ -155,7 +192,7 @@ class ReactionCollectionDialog(QDialog):
                 field.valueChanged.connect(self.changed)
                 self.targets_table.setCellWidget(row, column, field)
             baseline = QComboBox()
-            baseline.addItem("Endpoint line", "endpoints"); baseline.addItem("Zero", "zero")
+            baseline.addItem("Horizontal midpoint", "midpoint"); baseline.addItem("Endpoint line", "endpoints"); baseline.addItem("Zero", "zero")
             baseline.setCurrentIndex(baseline.findData(target.baseline)); baseline.currentIndexChanged.connect(self.changed)
             self.targets_table.setCellWidget(row, 4, baseline)
             color = QPushButton(target.color); color.setStyleSheet(f"color: {target.color};")
@@ -169,6 +206,23 @@ class ReactionCollectionDialog(QDialog):
             combo.setCurrentIndex(max(0, combo.findData(reference)))
         self.targets_table.resizeColumnsToContents()
         self.updating = was_updating
+
+    def update_mode_controls(self):
+        individual = self.collection.integration_mode == "individual"
+        self.individual_controls.setVisible(individual)
+        self.integrate_measurement_button.setVisible(individual)
+        self.edit_sample_window.setEnabled(not individual)
+        self.edit_sample_window.setVisible(not individual)
+        self.targets_label.setText("Compounds — assigned to individual measurement integrals" if individual else "Tracked targets — common retention-time windows (minutes)")
+        self.reset_window_button.setText("Remove selected compound's integral from this measurement" if individual else "Reset selected measurement to common window")
+        for column in (2, 3, 4):
+            self.targets_table.setColumnHidden(column, individual)
+
+    def mode_changed(self, enabled):
+        if not self.updating:
+            self.collection.integration_mode = "individual" if enabled else "common"
+            self.update_mode_controls()
+            self.changed()
 
     def sync_model(self):
         name = self.name.text().strip()
@@ -211,6 +265,7 @@ class ReactionCollectionDialog(QDialog):
         except (ValueError, TypeError) as error:
             self.results = []
             self.note.setText(str(error)); self.results_table.setRowCount(0); self.progress.clear()
+            self.plot_progress_button.setEnabled(False)
             self.update_title()
             return False
         for combo in (self.ratio_reference, self.internal_standard):
@@ -222,9 +277,13 @@ class ReactionCollectionDialog(QDialog):
         self.note.setText(
             f"{len(self.collection.samples)} measurements; {missing} without reaction times (not plotted). "
             "Areas/ratios are detector-signal trends, not calibrated conversion. "
-            "Drag the overlay window to change a common window or the selected measurement's override.")
-        self.results_table.setRowCount(len(self.results))
-        for row, result in enumerate(self.results):
+            + ("Select a measurement, drag limits/baseline points, enter A/B/C/D or a custom name, and integrate. Plot progress opens integral-% curves in a new window."
+               if self.collection.integration_mode == "individual" else
+               "Drag the overlay window to change a common window or the selected measurement's override."))
+        self.display_results = [r for r in self.results if r["assigned"]] if self.collection.integration_mode == "individual" else self.results
+        blocked = self.results_table.blockSignals(True)
+        self.results_table.setRowCount(len(self.display_results))
+        for row, result in enumerate(self.display_results):
             def display(value):
                 return "" if value is None else f"{value:.6g}" if isinstance(value, (float, int)) else str(value)
             values = (result["measurement"], result["reaction_time_min"], result["target"],
@@ -233,7 +292,14 @@ class ReactionCollectionDialog(QDialog):
                       result["normalized_area"], result["status"])
             for column, value in enumerate(values):
                 self.results_table.setItem(row, column, QTableWidgetItem(display(value)))
+        self.results_table.blockSignals(blocked)
         self.results_table.resizeColumnsToContents()
+        plot_ready = any(len({r["reaction_time_min"] for r in self.results if r["target_id"] == target.id
+                             and r["reaction_time_min"] is not None and r["area_percent"] is not None}) >= 2
+                         for target in self.collection.targets)
+        self.plot_progress_button.setEnabled(plot_ready)
+        for window in list(self.progress_windows):
+            window.set_results(self.collection, self.results)
         self.draw_plots(); self.update_title()
         return True
 
@@ -271,6 +337,7 @@ class ReactionCollectionDialog(QDialog):
             return
         self.collection.targets = [t for t in self.collection.targets if t.id != target.id]
         self.collection.overrides = {key: window for key, window in self.collection.overrides.items() if key[1] != target.id}
+        self.collection.individual_integrations = {key: spec for key, spec in self.collection.individual_integrations.items() if key[1] != target.id}
         if self.collection.ratio_reference == target.id:
             self.collection.ratio_reference = None
         if self.collection.internal_standard == target.id:
@@ -286,24 +353,106 @@ class ReactionCollectionDialog(QDialog):
 
     def selection_changed(self, *_):
         if not self.updating:
+            self.sync_individual_selection()
             self.draw_plots()
+
+    def sync_individual_selection(self):
+        if self.collection.integration_mode != "individual":
+            return
+        sample, target = self.selected_sample(), self.selected_target()
+        if sample is None:
+            return
+        self.updating = True
+        previous = self.individual_channel.currentText()
+        self.individual_channel.clear(); self.individual_channel.addItems([c.name for c in sample.channels])
+        self.individual_channel.setCurrentText(previous)
+        if self.sender() in (self.targets_table, self.samples_table) and target is not None:
+            spec = self.collection.individual_integrations.get((sample.id, target.id))
+            self.compound_name.setCurrentText(target.name)
+            self.individual_channel.setCurrentText(spec.channel if spec is not None else target.channel)
+            if spec is not None:
+                self.pending_windows[(sample.id, spec.channel)] = (spec.start_min, spec.end_min)
+                self.pending_baselines[(sample.id, spec.channel)] = (spec.baseline, spec.baseline_start, spec.baseline_end)
+        self.updating = False
+
+    def choose_compound(self, *_):
+        name = self.compound_name.currentText().strip()
+        for row, target in enumerate(self.collection.targets):
+            if target.name == name:
+                self.targets_table.selectRow(row)
+                self.selection_changed()
+                break
+
+    def baseline_mode_changed(self, *_):
+        if not self.updating:
+            sample = self.selected_sample()
+            if sample is not None:
+                self.pending_baselines[(sample.id, self.individual_channel.currentText())] = (self.individual_baseline.currentData(), None, None)
+            self.draw_plots()
+
+    def integrate_measurement(self):
+        if not self.recalculate():
+            return
+        sample = self.selected_sample()
+        name = self.compound_name.currentText().strip()
+        if sample is None or not name:
+            self.note.setText("Select a measurement and enter a compound name."); return
+        channel = self.individual_channel.currentText()
+        trace = next((c for c in sample.channels if c.name == channel), None)
+        if trace is None:
+            return
+        start, end = map(float, self.window_region.getRegion())
+        method, first, last = self.pending_baselines.get((sample.id, channel), ("midpoint", None, None))
+        try:
+            integration_curve(trace, start, end, method, first, last)
+        except ValueError as error:
+            self.note.setText(str(error)); return
+        target = next((t for t in self.collection.targets if t.name == name), None)
+        if target is None:
+            index = 1
+            while any(t.id == f"t{index:03d}" for t in self.collection.targets):
+                index += 1
+            target = ReactionTarget(f"t{index:03d}", name, channel, start, end, color=COLORS[(index - 1) % len(COLORS)])
+            self.collection.targets.append(target)
+        self.collection.individual_integrations[(sample.id, target.id)] = IndividualIntegration(channel, start, end, method, first, last)
+        self.dirty = True; self.render_targets()
+        self.targets_table.selectRow(self.collection.targets.index(target))
+        self.recalculate()
+
+    def select_integral(self):
+        if self.updating or self.collection.integration_mode != "individual":
+            return
+        row = self.results_table.currentRow()
+        if not 0 <= row < len(getattr(self, "display_results", [])):
+            return
+        result = self.display_results[row]
+        self.samples_table.selectRow(next(i for i, s in enumerate(self.collection.samples) if s.id == result["sample_id"]))
+        self.targets_table.selectRow(next(i for i, t in enumerate(self.collection.targets) if t.id == result["target_id"]))
+        self.sync_individual_selection(); self.draw_plots()
 
     def window_changed(self):
         if self.updating:
-            return
-        target = self.selected_target()
-        if target is None:
             return
         start, end = sorted(map(float, self.window_region.getRegion()))
         if start < 0 or start >= end:
             self.note.setText("Select a nonzero, non-negative retention-time window.")
             return
         sample = self.selected_sample()
+        if self.collection.integration_mode == "individual":
+            if sample is not None:
+                self.pending_windows[(sample.id, self.individual_channel.currentText())] = (start, end)
+            return
+        target = self.selected_target()
+        if target is None:
+            return
         if self.edit_sample_window.isChecked():
             if sample is None:
                 self.note.setText("Select a measurement before adjusting its individual window.")
                 return
             self.collection.overrides[(sample.id, target.id)] = (start, end)
+            spec = self.collection.individual_integrations.get((sample.id, target.id))
+            if spec is not None:
+                spec.start_min, spec.end_min = start, end
         else:
             target.start_min, target.end_min = start, end
             row = self.targets_table.currentRow()
@@ -320,7 +469,30 @@ class ReactionCollectionDialog(QDialog):
         sample, target = self.selected_sample(), self.selected_target()
         if sample is not None and target is not None:
             self.collection.overrides.pop((sample.id, target.id), None)
+            self.collection.individual_integrations.pop((sample.id, target.id), None)
             self.dirty = True; self.recalculate()
+
+    def baseline_edited(self, start, end, first, last):
+        sample, target = self.selected_sample(), self.selected_target()
+        if sample is None:
+            return
+        if self.collection.integration_mode == "individual":
+            channel = self.individual_channel.currentText()
+            self.pending_windows[(sample.id, channel)] = (start, end)
+            self.pending_baselines[(sample.id, channel)] = ("manual", first, last)
+        elif target is not None:
+            self.collection.individual_integrations[(sample.id, target.id)] = IndividualIntegration(target.channel, start, end, "manual", first, last)
+            self.updating = True; self.edit_sample_window.setChecked(True); self.updating = False
+            self.dirty = True; self.recalculate()
+
+    def open_progress_plot(self):
+        if not self.recalculate() or not self.plot_progress_button.isEnabled():
+            return None
+        dialog = ReactionProgressDialog(self.collection, self.results, self)
+        self.progress_windows.add(dialog)
+        dialog.destroyed.connect(lambda *_, d=dialog: self.progress_windows.discard(d))
+        dialog.show()
+        return dialog
 
     def draw_plots(self, *_):
         if self.updating:
@@ -329,7 +501,10 @@ class ReactionCollectionDialog(QDialog):
         try:
             self.overlay.clear(); self.progress.clear()
             target, selected = self.selected_target(), self.selected_sample()
-            if target is not None:
+            self.baseline_editor.set_trace()
+            if self.collection.integration_mode == "individual":
+                self.draw_individual_overlay()
+            elif target is not None:
                 units = set()
                 for index, sample in enumerate(self.collection.samples):
                     trace = next((c for c in sample.channels if c.name == target.channel), None)
@@ -344,17 +519,17 @@ class ReactionCollectionDialog(QDialog):
                 window = (target.start_min, target.end_min)
                 if selected is not None and self.edit_sample_window.isChecked():
                     window = self.collection.overrides.get((selected.id, target.id), window)
+                    spec = self.collection.individual_integrations.get((selected.id, target.id))
+                    if spec is not None:
+                        window = (spec.start_min, spec.end_min)
                 self.window_region.setRegion(window)
                 self.overlay.addItem(self.window_region)
                 if selected is not None:
                     trace = next((c for c in selected.channels if c.name == target.channel), None)
                     if trace is not None:
-                        actual = self.collection.overrides.get((selected.id, target.id), (target.start_min, target.end_min))
-                        try:
-                            x, _, baseline = integration_curve(trace, *actual, target.baseline)
-                            self.overlay.plot(x, baseline, pen=pg.mkPen(target.color, width=2, style=Qt.PenStyle.DashLine), name="Selected sample baseline")
-                        except ValueError:
-                            pass
+                        spec = self.collection.individual_integrations.get((selected.id, target.id))
+                        self.baseline_editor.set_trace(trace.times, trace.values, spec.baseline if spec else target.baseline,
+                                                       (spec.baseline_start, spec.baseline_end) if spec and spec.baseline == "manual" else None)
             column = self.progress_metric.currentData()
             units = {result["signal_unit"] for result in self.results if result["area"] is not None}
             ylabel = {"area": "Integrated area", "area_percent": "Area fraction (%)", "ratio": "Area / reference", "normalized_area": "Area / internal standard"}[column]
@@ -364,13 +539,42 @@ class ReactionCollectionDialog(QDialog):
             self.progress.setTitle("Reaction progress — detector signal, not calibrated conversion")
             for item in self.collection.targets:
                 rows = sorted((r for r in self.results if r["target_id"] == item.id and r["reaction_time_min"] is not None), key=lambda r: r["reaction_time_min"])
-                if rows:
+                if rows and any(r[column] is not None for r in rows):
                     x = [r["reaction_time_min"] for r in rows]
                     y = [np.nan if r[column] is None else r[column] for r in rows]
                     self.progress.plot(x, y, pen=pg.mkPen(item.color, width=2), symbol="o", symbolSize=6,
                                        symbolBrush=item.color, name=item.name, connect="finite")
         finally:
             self.updating = False
+
+    def draw_individual_overlay(self):
+        sample = self.selected_sample()
+        if sample is None:
+            return
+        channel = self.individual_channel.currentText()
+        trace = next((c for c in sample.channels if c.name == channel), None)
+        if trace is None:
+            return
+        self.overlay.plot(trace.times, trace.values, pen=pg.mkPen("#48a9ef", width=2), name=f"{sample.name} — {channel}")
+        self.overlay.setTitle(f"{sample.name} — select limits, adjust baseline, assign compound")
+        self.overlay.setLabel("left", "Signal", units=trace.unit)
+        target = self.selected_target()
+        for (sample_id, target_id), spec in self.collection.individual_integrations.items():
+            if sample_id != sample.id or spec.channel != channel:
+                continue
+            compound = next(t for t in self.collection.targets if t.id == target_id)
+            color = QColor(compound.color); color.setAlpha(80 if target is not None and target.id == target_id else 30)
+            item = pg.LinearRegionItem((spec.start_min, spec.end_min), movable=False, brush=color, pen=None)
+            item.setZValue(-10); item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            for line in item.lines:
+                line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.overlay.addItem(item, ignoreBounds=True)
+        default_window = (target.start_min, target.end_min) if target is not None and target.channel == channel else (float(trace.times[0]), float(trace.times[-1]))
+        window = self.pending_windows.get((sample.id, channel), default_window)
+        self.window_region.setRegion(window)
+        self.overlay.addItem(self.window_region, ignoreBounds=True)
+        method, first, last = self.pending_baselines.get((sample.id, channel), (self.individual_baseline.currentData(), None, None))
+        self.baseline_editor.set_trace(trace.times, trace.values, method, (first, last) if method == "manual" else None)
 
     def save(self):
         if not self.recalculate():
@@ -423,3 +627,55 @@ class ReactionCollectionDialog(QDialog):
 
     def reject(self):
         self.close()  # Escape must honor the same unsaved-collection handling.
+
+
+class ReactionProgressDialog(QDialog):
+    """Independent progress plot with user-selected compound series."""
+    def __init__(self, collection, results, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setWindowTitle(f"Reaction progress — {collection.name}")
+        self.resize(950, 650)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Choose compounds to plot. Integral % is the fraction of assigned integrals in each channel, not calibrated conversion."))
+        self.compounds = QListWidget()
+        self.compounds.setMaximumHeight(130)
+        self.compounds.itemChanged.connect(self.draw_plot)
+        layout.addWidget(self.compounds)
+        self.plot = pg.PlotWidget()
+        self.plot.addLegend(); self.plot.showGrid(x=True, y=True, alpha=.2)
+        self.plot.setLabel("bottom", "Reaction time", units="min")
+        self.plot.setLabel("left", "Integral (%)")
+        layout.addWidget(self.plot)
+        self.set_results(collection, results)
+
+    def set_results(self, collection, results):
+        previous = {self.compounds.item(i).data(Qt.ItemDataRole.UserRole): self.compounds.item(i).checkState() for i in range(self.compounds.count())}
+        self.targets = [replace(t) for t in collection.targets]
+        self.results = [dict(row) for row in results]
+        self.compounds.blockSignals(True); self.compounds.clear()
+        for target in self.targets:
+            item = QListWidgetItem(target.name)
+            item.setData(Qt.ItemDataRole.UserRole, target.id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(previous.get(target.id, Qt.CheckState.Checked))
+            item.setForeground(QColor(target.color))
+            self.compounds.addItem(item)
+        self.compounds.blockSignals(False)
+        self.draw_plot()
+
+    def draw_plot(self, *_):
+        if not hasattr(self, "plot"):
+            return
+        self.plot.clear()
+        checked = {self.compounds.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.compounds.count())
+                   if self.compounds.item(i).checkState() == Qt.CheckState.Checked}
+        for target in self.targets:
+            if target.id not in checked:
+                continue
+            rows = sorted((row for row in self.results if row["target_id"] == target.id and row["reaction_time_min"] is not None), key=lambda row: row["reaction_time_min"])
+            if rows and any(r["area_percent"] is not None for r in rows):
+                self.plot.plot([r["reaction_time_min"] for r in rows],
+                               [np.nan if r["area_percent"] is None else r["area_percent"] for r in rows],
+                               pen=pg.mkPen(target.color, width=2), symbol="o", symbolBrush=target.color,
+                               name=target.name, connect="finite")

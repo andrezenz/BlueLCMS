@@ -8,7 +8,34 @@ import tempfile
 import numpy as np
 
 
-def integrate_trace(times, signal, start: float, stop: float) -> float:
+def baseline_curve(times, signal, start, stop, method="midpoint", baseline_start=None, baseline_end=None):
+    """Interpolate limits and construct a horizontal, endpoint, zero or manual baseline."""
+    times, signal = np.asarray(times, dtype=float), np.asarray(signal, dtype=float)
+    if (times.ndim != 1 or signal.ndim != 1 or len(times) < 2 or len(times) != len(signal)
+            or not np.isfinite(times).all() or not np.isfinite(signal).all()
+            or not np.all(np.diff(times) > 0)):
+        raise ValueError("Integration requires finite signals and strictly increasing times")
+    start, stop = float(start), float(stop)
+    if not np.isfinite([start, stop]).all() or not times[0] <= start < stop <= times[-1]:
+        raise ValueError("Integration interval is outside the UV trace or empty")
+    x = np.r_[start, times[(times > start) & (times < stop)], stop]
+    y = np.interp(x, times, signal)
+    if method == "midpoint":
+        base = np.full(len(x), (y[0] + y[-1]) / 2)
+    elif method == "endpoints":
+        base = y[0] + (y[-1] - y[0]) * (x - start) / (stop - start)
+    elif method == "zero":
+        base = np.zeros(len(x))
+    elif method == "manual":
+        if baseline_start is None or baseline_end is None or not np.isfinite([baseline_start, baseline_end]).all():
+            raise ValueError("Manual baseline requires two finite endpoint heights")
+        base = baseline_start + (baseline_end - baseline_start) * (x - start) / (stop - start)
+    else:
+        raise ValueError("Unknown baseline method")
+    return x, y, base
+
+
+def integrate_trace(times, signal, start: float, stop: float, baseline="zero", baseline_start=None, baseline_end=None) -> float:
     """Integrate a selected UV interval in recorded units times minutes."""
     start, stop = sorted((float(start), float(stop)))
     times, signal = np.asarray(times, dtype=float), np.asarray(signal, dtype=float)
@@ -18,10 +45,8 @@ def integrate_trace(times, signal, start: float, stop: float) -> float:
     times, signal = times[order], signal[order]
     if start < times[0] or stop > times[-1]:
         raise ValueError("Integration interval is outside the UV trace")
-    inside = (times > start) & (times < stop)
-    x = np.concatenate(([start], times[inside], [stop]))
-    y = np.interp(x, times, signal)
-    return abs(float(np.trapezoid(y, x)))
+    x, y, base = baseline_curve(times, signal, start, stop, baseline, baseline_start, baseline_end)
+    return abs(float(np.trapezoid(y - base, x)))
 
 
 def source_fingerprint(source: Path) -> dict:

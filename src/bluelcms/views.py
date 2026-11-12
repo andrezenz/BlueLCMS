@@ -2,9 +2,87 @@
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPen
-from PySide6.QtWidgets import QGraphicsRectItem, QMenu
+from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QMenu
+
+from .integrations import baseline_curve
+
+
+class BaselineEditor(QObject):
+    """Two draggable baseline endpoints paired with an existing time region."""
+    edited = Signal(float, float, float, float)
+
+    def __init__(self, plot, region):
+        super().__init__(plot)
+        self.plot, self.region = plot, region
+        self.updating = False
+        self.trace = None
+        self.method = "midpoint"
+        self.heights = None
+        self.line = QGraphicsLineItem()
+        self.line.setPen(pg.mkPen("#f3ae57", width=2))
+        self.line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.points = [pg.TargetItem(size=12, movable=True, pen=pg.mkPen("#f3ae57", width=2), brush="#10212d") for _ in range(2)]
+        self.items = [self.line, *self.points]
+        for item in self.items:
+            item.setZValue(25); item.hide()
+        for point in self.points:
+            point.sigPositionChanged.connect(self.point_moved)
+            point.sigPositionChangeFinished.connect(self.finish_edit)
+        region.sigRegionChanged.connect(self.refresh)
+
+    def set_trace(self, times=None, values=None, method="midpoint", heights=None):
+        if self.updating:
+            return
+        self.trace = None if times is None else (times, values)
+        self.method, self.heights = method, heights
+        self.refresh()
+
+    def refresh(self, *_):
+        if self.updating:
+            return
+        if self.trace is None:
+            for item in self.items:
+                item.hide()
+            return
+        start, stop = self.region.getRegion()
+        try:
+            _, _, base = baseline_curve(*self.trace, start, stop, self.method,
+                                        *(self.heights if self.heights is not None else (None, None)))
+        except ValueError:
+            for item in self.items:
+                item.hide()
+            return
+        self.updating = True
+        try:
+            for item in self.items:
+                if item not in self.plot.plotItem.items:
+                    self.plot.addItem(item, ignoreBounds=True)
+                item.show()
+            self.line.setLine(start, float(base[0]), stop, float(base[-1]))
+            self.points[0].setPos(start, float(base[0]))
+            self.points[1].setPos(stop, float(base[-1]))
+        finally:
+            self.updating = False
+
+    def point_moved(self, *_):
+        if self.updating or self.trace is None:
+            return
+        a, b = (point.pos() for point in self.points)
+        start = max(float(self.trace[0][0]), min(float(self.trace[0][-1]), a.x()))
+        stop = max(float(self.trace[0][0]), min(float(self.trace[0][-1]), b.x()))
+        if start >= stop:
+            return
+        self.method, self.heights = "manual", (a.y(), b.y())
+        blocked = self.region.blockSignals(True)
+        self.region.setRegion((start, stop))
+        self.region.blockSignals(blocked)
+        self.refresh()
+
+    def finish_edit(self, *_):
+        if not self.updating and self.trace is not None and self.heights is not None:
+            self.edited.emit(*map(float, self.region.getRegion()), *map(float, self.heights))
 
 
 def pixel_buckets(x, y, minimum, maximum, pixels):
@@ -80,16 +158,19 @@ class RegionViewBox(ResetViewBox):
     heatmap_zoom_finished = Signal(float, float, float, float)
     heatmap_wheel = Signal(int, bool)
     heatmap_clicked = Signal(float)
+    trace_clicked = Signal(float)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.heatmap_mode = False
 
-    def mousePressEvent(self, event, axis=None):
-        if (self.heatmap_mode and event.button() == Qt.MouseButton.LeftButton):
-            pos = self.mapToView(event.pos())
-            self.heatmap_clicked.emit(float(pos.x()))
-        super().mousePressEvent(event)
+    def mouseClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            time = float(self.mapToView(event.pos()).x())
+            (self.heatmap_clicked if self.heatmap_mode else self.trace_clicked).emit(time)
+        else:
+            super().mouseClickEvent(event)
 
     def wheelEvent(self, event, axis=None):
         if self.heatmap_mode:
@@ -149,6 +230,8 @@ class UVPlot(pg.PlotWidget):
         self.addItem(self.heatmap_cursor, ignoreBounds=True)
         self.scene().sigMouseMoved.connect(self.move_heatmap_cursor)
         self.view.heatmap_clicked.connect(self.heatmap_clicked.emit)
+        self.view.trace_clicked.connect(self.uv_clicked.emit)
+        self.view.trace_clicked.connect(self.clicked.emit)
 
         self.heatmap_zoom_preview.setZValue(30)
         self.heatmap_zoom_preview.hide()
@@ -168,36 +251,43 @@ class UVPlot(pg.PlotWidget):
         self.getViewBox().sigResized.connect(self.update_tic_view)
         self.trace = self.plot(pen=pg.mkPen("#48a9ef", width=2))
         self.region = pg.LinearRegionItem(brush=(72, 169, 239, 45), movable=False)
+        self.integration_highlights = []
         self.integration_enabled = False
         for line in self.region.lines:
             line.setMovable(True)
         self.addItem(self.region)
         self.region.hide()
+        self.baseline_editor = BaselineEditor(self, self.region)
         self.view.region_dragged.connect(lambda a, b: self.region.setRegion((min(a, b), max(a, b))))
         self.view.reset_requested.connect(self.enableAutoRange)
 
     def clear_uv(self):
         self.plotItem.clear()
+        self.integration_highlights = []
         self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
         if hasattr(self, "heatmap_cursor"):
             self.addItem(self.heatmap_cursor, ignoreBounds=True)
 
-    def mousePressEvent(self, event, axis=None):
-        if (self.view.heatmap_mode
-                and event.button() == Qt.MouseButton.LeftButton
-                and hasattr(self, "heatmap_clicked")):
-            pos = self.view.mapToView(event.pos())
-            self.heatmap_cursor.setPos(pos.x())
-            self.heatmap_cursor.show()
-            self.heatmap_clicked.emit(float(pos.x()))
-        elif (event.button() == Qt.MouseButton.LeftButton
-              and hasattr(self, "uv_clicked")):
-            pos = self.view.mapToView(event.pos())
-            self.heatmap_cursor.setPos(pos.x())
-            self.heatmap_cursor.show()
-            self.uv_clicked.emit(float(pos.x()))
-            self.clicked.emit(float(pos.x()))
-        super().mousePressEvent(event)
+    def set_integration_highlights(self, windows):
+        """Display saved intervals without intercepting trace clicks/drags."""
+        for item in self.integration_highlights:
+            self.removeItem(item)
+        self.integration_highlights = []
+        for start, stop, selected, tooltip in windows:
+            fill = QColor(255, 193, 70, 90) if selected else QColor(135, 149, 161, 30)
+            edge = QColor(255, 193, 70, 220) if selected else QColor(135, 149, 161, 65)
+            item = pg.LinearRegionItem((start, stop), movable=False,
+                                       brush=fill, hoverBrush=fill,
+                                       pen=pg.mkPen(edge, width=2 if selected else 1))
+            item.setZValue(-5 if selected else -10)
+            item.setToolTip(tooltip)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            item.setAcceptHoverEvents(False)
+            for line in item.lines:
+                line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                line.setAcceptHoverEvents(False)
+            self.addItem(item, ignoreBounds=True)
+            self.integration_highlights.append(item)
 
     def move_heatmap_cursor(self, position):
         if not self.getViewBox().sceneBoundingRect().contains(position):

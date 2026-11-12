@@ -23,7 +23,7 @@ from .reaction_collections import create_collection, load_collection
 from .deconvolution import SPECIES_COLORS, deconvolute_histograms
 from .deconvolution_dialog import DeconvolutionDialog
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
-from .integrations import integrate_trace, load_integrations, save_integrations
+from .integrations import baseline_curve, integrate_trace, load_integrations, save_integrations
 from . import bug_reports, updater
 from .bug_reports import BugReportDialog, github_issue_url
 from . import releases
@@ -355,6 +355,8 @@ class MainWindow(QMainWindow):
         self.folder = self.folders[0] if self.folders else None
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.integrations, self.integration_source = [], None
+        self.integration_baseline_key = None
+        self.integration_baseline_values = None
         self.reaction_windows = set()
         self.creating_reaction_collection = False
         self.discovered_measurements = {}
@@ -591,8 +593,12 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.integration_toolbar)
         self.integrate_action = self.integration_toolbar.addAction("Integrate interval")
         self.integrate_action.triggered.connect(self.integrate_region)
+        self.reset_baseline_action = self.integration_toolbar.addAction("Reset baseline")
+        self.reset_baseline_action.triggered.connect(self.reset_integration_baseline)
         self.show_integrations_action = self.integration_dock.toggleViewAction()
         self.show_integrations_action.setText("Show integrations")
+        self.show_integrations_action.toggled.connect(self.update_integration_highlights)
+        self.integration_dock.visibilityChanged.connect(self.update_integration_highlights)
         self.integration_toolbar.addAction(self.show_integrations_action)
         self.integration_toolbar.addSeparator()
         self.remove_integration_action = self.integration_toolbar.addAction("Remove selected")
@@ -608,6 +614,7 @@ class MainWindow(QMainWindow):
         self.integration_selection_label = QLabel("Select one measurement and a chromatogram interval.")
         self.integration_toolbar.addWidget(self.integration_selection_label)
         self.integration_table.itemSelectionChanged.connect(self.update_integration_actions)
+        self.integration_table.itemSelectionChanged.connect(self.update_integration_highlights)
         self.deconvolution_button = QToolButton(self)
         self.deconvolution_button.setText("Deconvolute")
         self.deconvolution_button.setCheckable(True)
@@ -635,6 +642,7 @@ class MainWindow(QMainWindow):
         self.uv.region.sigRegionChanged.connect(self.invalidate_interval_deconvolution)
         self.uv.region.sigRegionChanged.connect(self.update_integration_actions)
         self.uv.integrate_requested.connect(self.integrate_region)
+        self.uv.baseline_editor.edited.connect(self.integration_baseline_edited)
         self.update_integration_actions()
         self.statusBar().showMessage("Choose a measurement folder from Settings.")
         if self.folders or settings.cache_folder(): self.refresh_files()
@@ -1916,6 +1924,33 @@ class MainWindow(QMainWindow):
                 self.integration_table.setItem(row, column, item)
         self.integration_table.resizeColumnsToContents()
         self.update_integration_actions()
+        self.update_integration_highlights()
+
+    def update_integration_highlights(self, *_):
+        if self.closing:
+            return
+        windows = []
+        source = self.selected_integration_source()
+        if (self.show_integrations_action.isChecked() and self.mode.currentText() == "UV traces"
+                and source is not None and source == self.integration_source):
+            run = self.runs[source]
+            channels = {trace.name: trace for trace in self.selected_chromatograms(run)}
+            selected = {index.row() for index in self.integration_table.selectionModel().selectedRows()}
+            for row, record in enumerate(self.integrations):
+                channel = record.get("channel")
+                if channel is not None:
+                    trace = channels.get(channel)
+                    if trace is None or record.get("unit", trace.unit) != trace.unit:
+                        continue
+                    label = channel
+                else:
+                    if not run.dad or record.get("wavelength_nm") != self.wavelength.value():
+                        continue
+                    label = f"UV {self.wavelength.value()} nm"
+                start, stop = record["start_min"], record["stop_min"]
+                windows.append((start, stop, row in selected,
+                                f"Integration {row + 1}: {label}, {start:.4f}–{stop:.4f} min"))
+        self.uv.set_integration_highlights(windows)
 
     def update_integration_actions(self):
         source = self.selected_integration_source()
@@ -1953,6 +1988,23 @@ class MainWindow(QMainWindow):
         self.integrate_action.setToolTip(description)
         self.integration_selection_label.setText(description)
         self.uv.integration_enabled = valid
+        self.reset_baseline_action.setEnabled(valid)
+        if source is not None:
+            run = self.runs[source]
+            key = (source, id(run), self.chromatogram_channel.currentData() if run.chromatograms else self.wavelength.value())
+        else:
+            key = None
+        if key != self.integration_baseline_key:
+            self.integration_baseline_key = key
+            self.integration_baseline_values = None
+        if valid:
+            if run.chromatograms:
+                times, values = trace.times, trace.values
+            else:
+                times, values, _ = run.uv_trace(self.wavelength.value())
+            self.uv.baseline_editor.set_trace(times, values, "manual" if self.integration_baseline_values is not None else "midpoint", self.integration_baseline_values)
+        else:
+            self.uv.baseline_editor.set_trace()
         has_records = self.integration_source is not None and bool(self.integrations)
         self.clear_integrations_action.setEnabled(has_records)
         self.remove_integration_action.setEnabled(has_records and bool(self.integration_table.selectionModel().selectedRows()))
@@ -1961,6 +2013,16 @@ class MainWindow(QMainWindow):
                             and all(path in self.runs and (self.runs[path].chromatograms or len(self.runs[path].dad) >= 2) for path in paths))
         self.create_collection_action.setEnabled(collection_ready)
         self.create_collection_action.setToolTip("Create an embedded chromatogram collection from at least two fully loaded measurements; reaction times are assigned in the editor.")
+
+    def reset_integration_baseline(self):
+        self.integration_baseline_values = None
+        self.update_integration_actions()
+
+    def integration_baseline_edited(self, start, stop, first, last):
+        self.integration_baseline_values = (first, last)
+        self.invalidate_interval_deconvolution()
+        self.timer.start()
+        self.update_integration_actions()
 
     def integrate_region(self):
         source = self.selected_integration_source()
@@ -1980,13 +2042,17 @@ class MainWindow(QMainWindow):
         else:
             times, signal, _ = run.uv_trace(target)
         try:
-            integral = integrate_trace(times, signal, start, stop)
+            method = "manual" if self.integration_baseline_values is not None else "midpoint"
+            heights = self.integration_baseline_values or (None, None)
+            integral = integrate_trace(times, signal, start, stop, method, *heights)
+            _, _, baseline = baseline_curve(times, signal, start, stop, method, *heights)
         except ValueError as error:
             self.statusBar().showMessage(f"Cannot integrate: {error}")
             return
         if self.integration_source != source:
             self.refresh_integrations()
         record = {"start_min": min(start, stop), "stop_min": max(start, stop), "wavelength_nm": target, "absolute_integral": integral}
+        record.update(baseline=method, baseline_start=float(baseline[0]), baseline_end=float(baseline[-1]))
         if channel is not None:
             record.update(channel=channel.name, unit=channel.unit, wavelength_nm=channel.wavelength_nm)
         self.integrations.append(record)
@@ -2086,6 +2152,7 @@ class MainWindow(QMainWindow):
         if self.mode.currentText() == "DAD heatmap":
             self.draw_dad_heatmap()
             self.update_integration_actions()
+            self.update_integration_highlights()
             return
         self.uv.view.heatmap_mode = False
         self.uv.heatmap_zoom_preview.hide()
@@ -2116,6 +2183,7 @@ class MainWindow(QMainWindow):
         if not self.runs and not self.stream_uv:
             self.uv.setTitle("UV / DAD — select one or more mzML/AIA measurements")
             self.update_integration_actions()
+            self.update_integration_highlights()
             return
         target = self.wavelength.value()
         all_times = []
@@ -2191,6 +2259,7 @@ class MainWindow(QMainWindow):
             loading_overlay(self.uv, True)
 
         self.update_integration_actions()
+        self.update_integration_highlights()
 
     def calculate_region(self):
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
