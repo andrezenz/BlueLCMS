@@ -225,6 +225,76 @@ reload an already selected export after it changes. Source files are read-only.
 External programs can use `--open "/path/to/sample.AIA"` or a `.cdf` path, with
 optional `--start`/`--end` times in minutes; see the bundled external-command help.
 
+### Reaction-monitoring collections
+
+Select at least two fully loaded measurements in the sidebar, then choose
+**Create collection…** on the Integration toolbar. A separate editor snapshots
+all recorded AIA channels, or the currently selected UV wavelength for mzML and
+matched LC-MS runs. Measurements without usable UV/chromatogram data cannot be
+used. The original files and individual integration sidecars are not modified.
+
+1. Enter **Reaction time (min)** for each measurement. Times are elapsed reaction
+   times, not automatically inferred from injection dates or filenames. Blank
+   times retain integrations but omit the measurement from progress plots.
+   Duplicate times retain individual replicates without automatic averaging.
+2. **Add target** for each tracked compound, select its recorded channel, and
+   define a common start/end retention-time window. Target names and colors are
+   editable. Select a target to inspect the chromatogram overlays and drag its
+   shaded window. A common retention time is a tracking convention, not proof of
+   compound identity; review the overlays for coelution and retention drift.
+3. Select a measurement and enable **Edit window for selected measurement only**
+   to save a manual retention-window adjustment for that sample/target. **Reset
+   selected measurement to common window** removes the adjustment. The common
+   target window and every actual integration window are retained in the file.
+4. Choose **Integrated area**, **Area fraction (%)**, **Ratio to reference**, or
+   **Internal-standard normalized** for the reaction-progress plot. Set the
+   denominator/reference target in the corresponding selector. Colors identify
+   targets consistently. Missing values leave gaps rather than fabricated zeros.
+
+The default **Endpoint line** baseline joins the interpolated window endpoints;
+**Zero** is also available per target. Collection integrals are **signed**
+trapezoidal areas after baseline subtraction, in signal units × minutes. Negative
+areas are shown and flagged, not flipped positive. Area percentages are within
+each measurement's target channel/unit group and remain blank for incomplete or
+negative groups. Ratios divide target area by the chosen reference/internal
+standard area and remain blank for missing, non-positive or incompatible-unit
+denominators. These are detector-signal trends, not calibrated concentrations or
+chemical conversion. The ordinary single-measurement integration tool retains
+its existing absolute-area calculation.
+
+**Save collection…** writes a standard compressed ZIP archive. **Open collection…**
+on the Integration toolbar reopens it independently of source locations or the
+NAS. Collections include:
+
+```text
+manifest.json          # Versioned metadata, channels, times, targets, overrides,
+                       # baseline methods, references and SHA-256 data checksums
+measurements.csv       # Measurement identities, reaction times and provenance
+targets.csv            # Shared target windows, channels, baselines and colors
+integrations.csv       # Actual windows, areas, percentages, ratios and statuses
+source_data/           # Original AIA CDF files, when verified against loaded data
+chromatograms/         # Lossless .npy snapshots when original CDFs are unavailable
+README.txt             # Units, calculations and format conventions
+```
+
+Original CDFs are embedded only if their source manifest and decoded traces match
+the loaded data. Disconnected or changed exports use the loaded chromatograms
+instead, with explicit provenance. mzML collections retain the selected UV trace,
+not the complete MS dataset or every DAD wavelength. Uniform time axes are stored
+as start/step/count only when they reconstruct the original axis exactly;
+otherwise explicit times are retained. Archive writes are atomic, data checksums
+are checked on reopening, and files are read in memory without extracting or
+following original source paths. Results are recalculated from the saved traces.
+
+Open CSV result tables in Excel/LibreOffice/Python/R after unzipping. **Export CSV
+copy…** additionally includes a time/signal CSV for every chromatogram, alongside
+the complete reopenable collection; it leaves the active file path unchanged.
+Each CSV's signal unit and channel identity are recorded in the manifest. For
+the ten newest inspected AIA measurements (14 channels), the normal collection
+with original CDFs was about **0.61 MB**; adding full chromatogram CSVs increases
+the size. Collection data remain available for reintegration after the original
+NAS files are moved, disconnected or re-exported.
+
 ### Oligonucleotide deconvolution
 
 Select a retention-time interval, then enable **Deconvolute** at the right end of

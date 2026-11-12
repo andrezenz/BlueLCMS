@@ -65,9 +65,9 @@ def _netcdf_attributes(data: memoryview, offset: int, attributes=None) -> int:
     return offset
 
 
-def _read_netcdf_classic(path: Path, include_metadata=False):
+def _read_netcdf_classic(path: Path, include_metadata=False, content=None):
     """Read fixed-size variables from the NetCDF classic files Agilent AIA emits."""
-    data = memoryview(path.read_bytes())
+    data = memoryview(path.read_bytes() if content is None else content)
     if len(data) < 8 or data[:3].tobytes() != b"CDF" or data[3] not in (1, 2):
         raise ValueError("Expected a NetCDF classic file")
     version = data[3]

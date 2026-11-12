@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
 
 from . import settings
 from .aia import aia_fingerprint, is_aia, load_aia_cached
+from .reaction_collections import create_collection, load_collection
 from .deconvolution import SPECIES_COLORS, deconvolute_histograms
 from .deconvolution_dialog import DeconvolutionDialog
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
@@ -354,6 +355,8 @@ class MainWindow(QMainWindow):
         self.folder = self.folders[0] if self.folders else None
         self.runs, self.histograms, self.stream_uv, self.stream_tic, self.run_data = {}, {}, {}, {}, None
         self.integrations, self.integration_source = [], None
+        self.reaction_windows = set()
+        self.creating_reaction_collection = False
         self.discovered_measurements = {}
         self.cached_measurements = {}
         self.background_discovery = False
@@ -596,6 +599,11 @@ class MainWindow(QMainWindow):
         self.remove_integration_action.triggered.connect(self.remove_integration)
         self.clear_integrations_action = self.integration_toolbar.addAction("Clear integrations")
         self.clear_integrations_action.triggered.connect(self.clear_integrations)
+        self.integration_toolbar.addSeparator()
+        self.create_collection_action = self.integration_toolbar.addAction("Create collection…")
+        self.create_collection_action.triggered.connect(self.create_reaction_collection)
+        self.open_collection_action = self.integration_toolbar.addAction("Open collection…")
+        self.open_collection_action.triggered.connect(self.open_reaction_collection)
         self.integration_toolbar.addSeparator()
         self.integration_selection_label = QLabel("Select one measurement and a chromatogram interval.")
         self.integration_toolbar.addWidget(self.integration_selection_label)
@@ -1841,6 +1849,50 @@ class MainWindow(QMainWindow):
                 return metadata.get("fingerprint")
         return None
 
+    def show_reaction_collection(self, collection, path=None):
+        from .reaction_dialog import ReactionCollectionDialog
+        dialog = ReactionCollectionDialog(collection, self, path)
+        self.reaction_windows.add(dialog)
+        dialog.destroyed.connect(lambda *_, d=dialog: self.reaction_windows.discard(d))
+        dialog.show()
+        return dialog
+
+    def create_reaction_collection(self):
+        paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
+        if self.creating_reaction_collection or len(paths) < 2 or any(path not in self.runs for path in paths):
+            self.statusBar().showMessage("Select at least two fully loaded chromatogram measurements.")
+            return
+        entries = [(path.name if isinstance(path, Path) else path.label,
+                    path if isinstance(path, Path) else path.agilent, self.runs[path]) for path in paths]
+        entries.sort(key=lambda entry: entry[0].casefold())
+        self.creating_reaction_collection = True
+        self.update_integration_actions()
+        self.statusBar().showMessage("Creating a self-contained reaction collection…")
+
+        def ready(token, result, error):
+            self.creating_reaction_collection = False
+            self.update_integration_actions()
+            if error:
+                QMessageBox.warning(self, "Could not create reaction collection", error)
+            else:
+                self.show_reaction_collection(result)
+                self.statusBar().showMessage("Assign elapsed reaction times and add integration targets, then save the collection.")
+
+        self.submit(0, create_collection, ready, entries, self.wavelength.value())
+
+    def open_reaction_collection(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open reaction collection", str(Path.home()), "Reaction collections (*.zip)")
+        if not path:
+            return
+
+        def ready(token, result, error):
+            if error:
+                QMessageBox.warning(self, "Could not open reaction collection", error)
+            else:
+                self.show_reaction_collection(result, path)
+
+        self.submit(0, load_collection, ready, Path(path))
+
     def refresh_integration_table(self):
         self.integration_table.setRowCount(len(self.integrations))
         self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Channel / nm", "Absolute integral", "% of integrals"))
@@ -1904,6 +1956,11 @@ class MainWindow(QMainWindow):
         has_records = self.integration_source is not None and bool(self.integrations)
         self.clear_integrations_action.setEnabled(has_records)
         self.remove_integration_action.setEnabled(has_records and bool(self.integration_table.selectionModel().selectedRows()))
+        paths = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
+        collection_ready = (not self.creating_reaction_collection and len(paths) >= 2
+                            and all(path in self.runs and (self.runs[path].chromatograms or len(self.runs[path].dad) >= 2) for path in paths))
+        self.create_collection_action.setEnabled(collection_ready)
+        self.create_collection_action.setToolTip("Create an embedded chromatogram collection from at least two fully loaded measurements; reaction times are assigned in the editor.")
 
     def integrate_region(self):
         source = self.selected_integration_source()
@@ -2244,6 +2301,10 @@ class MainWindow(QMainWindow):
                     label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event):
+        for dialog in list(self.reaction_windows):
+            if not dialog.close():
+                event.ignore()
+                return
         self.closing = True
         self.load_token += 1; self.region_token += 1; self.folder_token += 1
         self.hide()

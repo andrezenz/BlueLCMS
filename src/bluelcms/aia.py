@@ -50,9 +50,9 @@ def _time_factor(unit):
         raise ValueError(f"Missing or unsupported retention-time unit: {unit!r}") from error
 
 
-def read_chromatogram(path):
+def read_chromatogram(path, content=None):
     try:
-        variables, attributes, variable_attributes = _read_netcdf_classic(path, include_metadata=True)
+        variables, attributes, variable_attributes = _read_netcdf_classic(path, include_metadata=True, content=content)
         values = np.asarray(variables["ordinate_values"], dtype=np.float32)
         if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
             raise ValueError("Expected a non-empty, finite, one-dimensional ordinate_values array")

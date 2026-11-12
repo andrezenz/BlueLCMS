@@ -1,3 +1,9 @@
+## 1.0.3.dev3
+
+- Added reaction-monitoring collections created from multiple selected measurements, with explicitly assigned elapsed reaction times, named targets, common retention windows and per-measurement window adjustments.
+- Added endpoint-baseline integration, area/fraction/ratio/internal-standard progress plots, chromatogram overlays and a portable ZIP snapshot with JSON metadata and CSV results.
+- Embed verified original AIA CDF files when available; offline and mzML UV snapshots retain lossless chromatogram arrays. Collections reopen without their original sources and support an optional full-chromatogram CSV copy export.
+
 ## 1.0.3.dev2
 
 - Automatically hide mass-spectrum panes when selected measurements have no scans of the corresponding polarity. Chromatogram-only AIA and TIC-only measurements show no mass panes; saved manual visibility preferences are retained.
