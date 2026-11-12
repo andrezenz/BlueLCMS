@@ -86,12 +86,12 @@ class ReactionCollectionDialog(QDialog):
 
         right = QWidget(); right_layout = QVBoxLayout(right)
         selectors = QHBoxLayout()
-        self.metric = QComboBox()
+        self.progress_metric = QComboBox()
         for label, column in (("Integrated area", "area"), ("Area fraction (%)", "area_percent"),
                               ("Ratio to reference", "ratio"), ("Internal-standard normalized", "normalized_area")):
-            self.metric.addItem(label, column)
-        self.metric.currentIndexChanged.connect(self.draw_plots)
-        selectors.addWidget(self.metric)
+            self.progress_metric.addItem(label, column)
+        self.progress_metric.currentIndexChanged.connect(self.draw_plots)
+        selectors.addWidget(self.progress_metric)
         self.ratio_reference = QComboBox(); self.internal_standard = QComboBox()
         self.ratio_reference.currentIndexChanged.connect(self.references_changed)
         self.internal_standard.currentIndexChanged.connect(self.references_changed)
@@ -355,7 +355,7 @@ class ReactionCollectionDialog(QDialog):
                             self.overlay.plot(x, baseline, pen=pg.mkPen(target.color, width=2, style=Qt.PenStyle.DashLine), name="Selected sample baseline")
                         except ValueError:
                             pass
-            column = self.metric.currentData()
+            column = self.progress_metric.currentData()
             units = {result["signal_unit"] for result in self.results if result["area"] is not None}
             ylabel = {"area": "Integrated area", "area_percent": "Area fraction (%)", "ratio": "Area / reference", "normalized_area": "Area / internal standard"}[column]
             if column == "area" and len(units) == 1:

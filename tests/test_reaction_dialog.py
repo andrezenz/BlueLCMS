@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings
+from PySide6.QtGui import QPaintDevice
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from bluelcms import settings
@@ -13,6 +14,29 @@ from bluelcms.reaction_collections import load_collection
 from bluelcms.reaction_dialog import ReactionCollectionDialog
 from test_aia import make_aia
 from test_reaction_collections import kinetics
+
+
+def test_editor_preserves_qt_paint_metrics_and_renders(monkeypatch):
+    import sys
+
+    app = QApplication.instance() or QApplication([])
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    dialog = ReactionCollectionDialog(kinetics())
+    try:
+        # QPaintDevice.metric is a virtual method. Shadowing it with a widget
+        # breaks Qt's DPI/painting callbacks even if the numeric model works.
+        assert callable(dialog.metric)
+        assert dialog.metric(QPaintDevice.PaintDeviceMetric.PdmDpiX) > 0
+        dialog.show()
+        app.processEvents()
+        assert not dialog.grab().isNull()
+        assert not errors
+        dialog.progress_metric.setCurrentIndex(dialog.progress_metric.findData("area_percent"))
+        app.processEvents()
+        assert len(dialog.progress.plotItem.listDataItems()) == 2
+    finally:
+        dialog.dirty = False; dialog.close(); app.processEvents()
 
 
 def test_editor_time_points_windows_ratios_plots_and_save(tmp_path):
@@ -32,7 +56,7 @@ def test_editor_time_points_windows_ratios_plots_and_save(tmp_path):
         assert not dialog.collection.overrides
         dialog.samples_table.item(1, 1).setText("7.5")
         assert dialog.collection.samples[1].time_min == 7.5
-        dialog.metric.setCurrentIndex(dialog.metric.findData("ratio"))
+        dialog.progress_metric.setCurrentIndex(dialog.progress_metric.findData("ratio"))
         assert len(dialog.progress.plotItem.listDataItems()) == 2
         dialog.ratio_reference.setCurrentIndex(dialog.ratio_reference.findData("a"))
         assert dialog.results[3]["ratio"] == pytest.approx(1)

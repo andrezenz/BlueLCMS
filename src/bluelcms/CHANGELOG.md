@@ -1,3 +1,7 @@
+## 1.0.3.dev4
+
+- Fixed reaction collection creation/display failing during Qt painting because the progress selector shadowed Qt's built-in paint-metrics method.
+
 ## 1.0.3.dev3
 
 - Added reaction-monitoring collections created from multiple selected measurements, with explicitly assigned elapsed reaction times, named targets, common retention windows and per-measurement window adjustments.
