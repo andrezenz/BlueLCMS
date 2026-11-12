@@ -153,10 +153,11 @@ pausing the previous parser with its partial data retained in memory. Once
 the newly selected measurement is ready, paused loads resume in the background
 and are cached without being added to the selected plots.
 
-1. Use **Settings → Manage mzML locations…** to add one or more folders. The
+1. Use **Settings → Manage measurement locations…** to add one or more folders. The
    locations are remembered between sessions. All subfolders are searched and
    measurements appear under expandable source/folder nodes in the sidebar;
-   `.mzML` and gzip-compressed `.gz` mzML files are supported. Cached-only
+   `.mzML`, gzip-compressed `.gz` mzML files, Agilent `.AIA` export directories,
+   and standalone `.cdf` chromatograms are supported. Cached-only
    measurements retain their original folder hierarchy. Folder nodes can be
    expanded or collapsed; measurements in each folder sort newest-date-first,
    with undated entries after dated ones. Select measurement leaves to view data.
@@ -176,6 +177,44 @@ and are cached without being added to the selected plots.
    scans in the inclusive selected interval. These are m/z distributions,
     not neutral-mass deconvolutions unless the optional **Deconvolute** analysis is enabled. MS2+ spectra and scans lacking polarity or
    usable time metadata are excluded. Missing polarity data is never guessed.
+
+### Agilent AIA chromatograms
+
+Add the parent export folder (for example `Agilent-HPLC`), or an individual
+`.AIA` directory, under **Settings → Manage measurement locations…**. Each
+export appears once under its project hierarchy, even when it contains several
+CDF channel files. For example, `ANZ/ANZ260/2026_10_29_ANZ260P1.AIA` can contain
+both DAD1B and DAD1C. Standalone `.cdf` files are also supported; extension
+matching is case-insensitive.
+
+All recorded channels are initially overlaid in the main chromatogram plot,
+with channel names and recorded units in the legend. Use **Recorded chromatogram
+channel** to show one channel. Ctrl/Shift-select measurements to compare exports.
+The inspected OpenLAB exports contain mAU absorbance and minute-based timing;
+negative baseline values are preserved. Time units are read from the export and
+normalized to minutes. For uniformly sampled exports with zero-filled retention
+arrays, the time axis is reconstructed from the recorded delay and sampling
+interval, without stretching it to a separately rounded run duration.
+
+Channel letters do not identify wavelengths. BlueLCMS keeps labels such as
+**DAD1A**, **DAD1B**, and **DAD1C** and does not assume 250/254/260 nm. For
+chromatogram-only selections the wavelength and DAD heatmap controls are disabled;
+full UV spectra, MS spectra, extracted TICs and mass deconvolution are unavailable.
+The positive/negative pane visibility preferences remain unchanged.
+
+To integrate, select one measurement and one channel (or **All channels** when
+only one is recorded), drag an interval and use the existing **Integrate** action.
+Integration records retain channel identity and signal units; areas are in
+recorded units × minutes, and percentages are calculated separately per recorded
+channel. Integration sidecars are stored locally, not alongside the NAS export.
+
+Compact caches retain every recorded channel, units and source metadata for
+offline reopening; previews show the first recorded channel. On the next load,
+the reader compares all CDF filenames, sizes and modification times to detect
+re-exports, added channels and removed channels. Use **Refresh file list** to
+reload an already selected export after it changes. Source files are read-only.
+External programs can use `--open "/path/to/sample.AIA"` or a `.cdf` path, with
+optional `--start`/`--end` times in minutes; see the bundled external-command help.
 
 ### Oligonucleotide deconvolution
 
@@ -253,7 +292,7 @@ vendor-specific external DAD files.
 
 1. Connect to `afp://server/share` in your system file manager and authenticate
    there. Keep the share mounted while using ⌊Blue⌋ LCMS.
-2. In ⌊Blue⌋ LCMS, choose **Settings → Manage mzML locations…** and add the
+2. In ⌊Blue⌋ LCMS, choose **Settings → Manage measurement locations…** and add the
    mounted share folder (usually named `afp-volume:host=…,volume=…`) with **Add
    folder…**. The locations dialog manages mounted and local folders together.
 3. Select a file as usual. Directory listing and mzML loading run in background

@@ -1,3 +1,10 @@
+## 1.0.3.dev1
+
+- Added Agilent `.AIA` folder and standalone `.cdf` chromatogram discovery, with one sidebar measurement per export, named channel overlays, recorded units, and channel selection.
+- Added channel-specific integration and local offline caches that detect re-exported, added, or removed CDF channels. AIA exports remain read-only.
+- Preserved negative absorbance values and reconstructed uniformly sampled retention times from delay/interval metadata when exported retention arrays are empty or zero-filled.
+- Added external-open support for AIA/CDF and disabled unavailable wavelength/heatmap controls for chromatogram-only measurements.
+
 ## 1.0.2
 
 - Added oligonucleotide charge-envelope deconvolution for selected intervals, with configurable mass/charge limits, a relative-signal results list, species-colored MS bins, and charge-state labels. A persistent highlight limit defaults to seven species per spectrum.

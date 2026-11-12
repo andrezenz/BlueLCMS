@@ -38,6 +38,19 @@ macOS, with the app installed in Applications:
 
 ## Select a spectrum
 
+Agilent AIA exports can also be opened as chromatograms, using the `.AIA`
+directory or an individual `.cdf` file:
+
+```bash
+BlueLCMS --open "/path/to/sample.AIA" --start 2.35 --end 2.45
+```
+
+All recorded channels are displayed initially. Use **Recorded chromatogram
+channel** in the viewer to select one for integration. Channel names are retained
+without assuming wavelengths. These exports contain no MS scans or full UV
+spectra, so `--time`/MS selection is unavailable; `--wavelength` does not select
+an AIA channel. The original export is read-only and caches are stored locally.
+
 Select a retention-time interval; all times are in **minutes**:
 
 ```bash
@@ -98,8 +111,8 @@ For a source checkout, put the Python executable and the absolute path to
 
 ## Options and caching
 
-- `--open FILE`: required for a file-opening request; supports mzML,
-  gzip-compressed mzML, and BlueLCMS NPZ cache files.
+- `--open PATH`: required for an opening request; supports mzML,
+  gzip-compressed mzML, AIA directories, CDF chromatograms, and BlueLCMS NPZ cache files.
 - `--start MIN --end MIN`: select an interval; supply both, with end >= start.
 - `--time MIN`: select the nearest individual MS scan instead of an interval.
 - `--polarity positive|negative`: focus a panel and restrict nearest-scan lookup.

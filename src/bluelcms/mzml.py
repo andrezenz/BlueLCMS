@@ -33,6 +33,16 @@ class NamedTrace:
 
 
 @dataclass(frozen=True)
+class Chromatogram:
+    """A primary recorded LC channel, not an MS TIC or a wavelength spectrum."""
+    name: str
+    times: np.ndarray
+    values: np.ndarray
+    unit: str = ""
+    wavelength_nm: float | None = None
+
+
+@dataclass(frozen=True)
 class Run:
     dad: tuple[DADScan, ...]
     scans: tuple[Scan, ...]
@@ -41,6 +51,8 @@ class Run:
     # intensities, and may add chromatograms that are not DAD spectra.
     tic: tuple[tuple[float, float, str], ...] = ()
     auxiliary: tuple[NamedTrace, ...] = ()
+    chromatograms: tuple[Chromatogram, ...] = ()
+    source_metadata: str = ""
 
     def tic_points(self):
         """(time, intensity, polarity) triples, preferring declared TIC values."""
@@ -92,16 +104,28 @@ def file_display_name(path: Path, show_date_prefix: bool) -> str:
 
 
 def discover_files(folder: Path) -> list[Path]:
-    """Recursively find mzML and gzip-compressed mzML files newest-first."""
+    """Find measurements, treating each AIA directory as one indivisible run."""
+    import os
     if not folder.is_dir():
         raise OSError(f"Source folder is unavailable: {folder}")
+    if folder.suffix.lower() == ".aia":
+        return [folder] if any(p.is_file() and p.suffix.lower() == ".cdf" for p in folder.iterdir()) else []
     def order(path):
         match = DATE_PREFIX.match(path.name)
         return (0, -int(match.group(1).replace("_", "")), path.name.casefold()) if match else (1, 0, path.name.casefold())
-    return sorted(
-        (p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in {".mzml", ".gz"}),
-        key=order,
-    )
+    found = []
+    def failed(error):
+        raise error
+    for directory, subdirs, files in os.walk(folder, onerror=failed):
+        parent = Path(directory)
+        for name in subdirs[:]:
+            path = parent / name
+            if path.suffix.lower() == ".aia":
+                subdirs.remove(name)
+                if any(p.is_file() and p.suffix.lower() == ".cdf" for p in path.iterdir()):
+                    found.append(path)
+        found.extend(parent / name for name in files if Path(name).suffix.lower() in {".mzml", ".gz", ".cdf"})
+    return sorted(found, key=order)
 
 
 def retention_time(spectrum: dict) -> float | None:
@@ -187,6 +211,9 @@ class ProgressReader:
 def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=None, scan_callback=None) -> Run:
     if path.name.endswith(".bluelcms.npz"):
         return load_compact_cache(path, dad_callback, scan_callback)
+    if path.suffix.lower() in (".aia", ".cdf"):
+        from .aia import load_aia
+        return load_aia(path, progress)
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
     if progress is None:
@@ -232,11 +259,15 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
     ms = _pack_scans(run.scans, "mz") if run.scans else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
     from .thumbnails import PREVIEW_FORMAT, PREVIEW_SIZES, render_preview
     previews = {size: render_preview(run, size) for size in PREVIEW_SIZES}
+    source_metadata = source_metadata or run.source_metadata
     payload = {
         "source_metadata": np.array(source_metadata),
         "tic": np.asarray([(time, value) for time, value, _ in run.tic]).reshape(-1, 2),
         "tic_polarity": np.asarray([polarity for _, _, polarity in run.tic]),
         "auxiliary_names": np.asarray([trace.name for trace in run.auxiliary]),
+        "chromatogram_names": np.asarray([trace.name for trace in run.chromatograms]),
+        "chromatogram_units": np.asarray([trace.unit for trace in run.chromatograms]),
+        "chromatogram_wavelengths": np.asarray([np.nan if trace.wavelength_nm is None else trace.wavelength_nm for trace in run.chromatograms]),
         "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
         "preview_format": np.array(PREVIEW_FORMAT),
         **{f"preview_{size}": np.frombuffer(content, dtype=np.uint8) for size, content in previews.items()},
@@ -246,6 +277,9 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
     for index, trace in enumerate(run.auxiliary):
         payload[f"auxiliary_times_{index}"] = trace.times
         payload[f"auxiliary_values_{index}"] = trace.values
+    for index, trace in enumerate(run.chromatograms):
+        payload[f"chromatogram_times_{index}"] = trace.times
+        payload[f"chromatogram_values_{index}"] = trace.values.astype(np.float32, copy=False)
     if not bool(dad["shared"]): payload["dad_offsets"] = dad["offsets"]
     if not bool(ms["shared"]): payload["ms_offsets"] = ms["offsets"]
     try:
@@ -258,7 +292,7 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
             if source_metadata:
                 import json
                 metadata = json.loads(source_metadata)
-                if isinstance(metadata, dict) and not metadata.get("vendor") and metadata.get("path"):
+                if isinstance(metadata, dict) and not metadata.get("vendor") and metadata.get("source_type") != "aia" and metadata.get("path"):
                     write_desktop_thumbnail(Path(metadata["path"]), previews)
         except (ValueError, OSError):
             # The analysis cache remains valid even if the desktop thumbnail
@@ -288,11 +322,16 @@ def load_compact_cache(path: Path, dad_callback=None, scan_callback=None) -> Run
         skipped = int(data["skipped_scans"])
         tic = tuple((float(row[0]), float(row[1]), str(polarity)) for row, polarity in zip(data["tic"], data["tic_polarity"])) if "tic" in data else ()
         auxiliary = tuple(NamedTrace(str(name), data[f"auxiliary_times_{index}"], data[f"auxiliary_values_{index}"]) for index, name in enumerate(data["auxiliary_names"])) if "auxiliary_names" in data else ()
+        chromatograms = tuple(Chromatogram(str(name), data[f"chromatogram_times_{index}"], data[f"chromatogram_values_{index}"],
+                                          str(data["chromatogram_units"][index]),
+                                          None if np.isnan(data["chromatogram_wavelengths"][index]) else float(data["chromatogram_wavelengths"][index]))
+                              for index, name in enumerate(data["chromatogram_names"])) if "chromatogram_names" in data else ()
+        metadata = str(data["source_metadata"]) if "source_metadata" in data else ""
     if dad_callback:
         for scan in dad: dad_callback(scan)
     if scan_callback:
         for scan in scans: scan_callback(scan)
-    return Run(dad, scans, skipped, tic, auxiliary)
+    return Run(dad, scans, skipped, tic, auxiliary, chromatograms, metadata)
 
 
 

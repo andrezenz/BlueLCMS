@@ -27,8 +27,15 @@ def nearest_uv_trace(run, target=254.0):
 
 
 def preview_series(run):
-    wavelength, uv_times, uv_values = nearest_uv_trace(run, 254.0)
-    series = [("uv", f"UV {wavelength:g} nm", uv_times, uv_values)]
+    if run.chromatograms:
+        trace = run.chromatograms[0]
+        # AIA previews use the first recorded channel, without inventing nm.
+        series = [("uv", trace.name, trace.times, trace.values)]
+        if not run.tic and not run.scans:
+            return series
+    else:
+        wavelength, uv_times, uv_values = nearest_uv_trace(run, 254.0)
+        series = [("uv", f"UV {wavelength:g} nm", uv_times, uv_values)]
     tic = {"+": {}, "-": {}}
     for time, intensity, polarity in run.tic_points():
         if polarity in tic:
@@ -93,7 +100,7 @@ def render_preview(run, size=128):
                     painter.line(segment, fill=PREVIEW_COLORS[kind], width=stroke)
 
     font = ImageFont.load_default(size=max(7, round(size * .07)))
-    row_height = legend_height / 3
+    row_height = legend_height / max(1, len(series))
     for index, (kind, label, _, _) in enumerate(series):
         x = left + max(2, round(size * .02))
         legend_y = bottom + row_height * (index + .5)

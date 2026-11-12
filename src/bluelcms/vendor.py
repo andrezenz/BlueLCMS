@@ -41,7 +41,7 @@ def _netcdf_string(data: memoryview, offset: int) -> tuple[str, int]:
     return value, offset + ((length + 3) & ~3)
 
 
-def _netcdf_attributes(data: memoryview, offset: int) -> int:
+def _netcdf_attributes(data: memoryview, offset: int, attributes=None) -> int:
     tag = struct.unpack_from(">I", data, offset)[0]
     if tag == 0:
         # Agilent writes the optional count field even for an empty list.
@@ -51,17 +51,26 @@ def _netcdf_attributes(data: memoryview, offset: int) -> int:
     count = struct.unpack_from(">I", data, offset + 4)[0]
     offset += 8
     for _ in range(count):
-        _, offset = _netcdf_string(data, offset)
+        name, offset = _netcdf_string(data, offset)
         type_code, length = struct.unpack_from(">II", data, offset)
-        offset += 8 + ((_NETCDF_TYPES[type_code][1] * length + 3) & ~3)
+        offset += 8
+        dtype, item_size = _NETCDF_TYPES[type_code]
+        size = item_size * length
+        if offset + size > len(data):
+            raise ValueError("Truncated NetCDF attribute")
+        if attributes is not None:
+            values = np.frombuffer(data, dtype=dtype, count=length, offset=offset)
+            attributes[name] = bytes(data[offset:offset + size]).decode("latin-1").rstrip("\0") if type_code == 2 else values.tolist()
+        offset += (size + 3) & ~3
     return offset
 
 
-def _read_netcdf_classic(path: Path) -> dict[str, np.ndarray]:
+def _read_netcdf_classic(path: Path, include_metadata=False):
     """Read fixed-size variables from the NetCDF classic files Agilent AIA emits."""
     data = memoryview(path.read_bytes())
-    if data[:3].tobytes() != b"CDF" or data[3] not in (1, 2):
+    if len(data) < 8 or data[:3].tobytes() != b"CDF" or data[3] not in (1, 2):
         raise ValueError("Expected a NetCDF classic file")
+    version = data[3]
     offset = 8
     dimensions = []
     tag = struct.unpack_from(">I", data, offset)[0]
@@ -73,32 +82,39 @@ def _read_netcdf_classic(path: Path) -> dict[str, np.ndarray]:
         for _ in range(count):
             _, offset = _netcdf_string(data, offset)
             length = struct.unpack_from(">I", data, offset)[0]
+            if length == 0:
+                raise ValueError("Record/unlimited NetCDF dimensions are not supported")
             dimensions.append(length)
             offset += 4
     else:
-        offset += 4
-    offset = _netcdf_attributes(data, offset)
+        offset += 8
+    attributes = {}
+    offset = _netcdf_attributes(data, offset, attributes)
     tag = struct.unpack_from(">I", data, offset)[0]
     if tag == 0:
-        return {}
+        return ({}, attributes, {}) if include_metadata else {}
     if tag != 11:
         raise ValueError("Invalid NetCDF variable list")
     count = struct.unpack_from(">I", data, offset + 4)[0]
     offset += 8
     variables = {}
+    variable_attributes = {}
     for _ in range(count):
         name, offset = _netcdf_string(data, offset)
         dimension_count = struct.unpack_from(">I", data, offset)[0]
         offset += 4
         dimension_ids = struct.unpack_from(f">{dimension_count}I", data, offset) if dimension_count else ()
         offset += 4 * dimension_count
-        offset = _netcdf_attributes(data, offset)
-        type_code, _, begin = struct.unpack_from(">III", data, offset)
-        offset += 12
+        variable_attributes[name] = {}
+        offset = _netcdf_attributes(data, offset, variable_attributes[name])
+        type_code, _ = struct.unpack_from(">II", data, offset)
+        offset += 8
+        begin = struct.unpack_from(">Q" if version == 2 else ">I", data, offset)[0]
+        offset += 8 if version == 2 else 4
         dtype, item_size = _NETCDF_TYPES[type_code]
         shape = tuple(dimensions[index] for index in dimension_ids)
         variables[name] = np.frombuffer(data, dtype=dtype, count=int(np.prod(shape, dtype=int) or 1), offset=begin).reshape(shape).copy()
-    return variables
+    return (variables, attributes, variable_attributes) if include_metadata else variables
 
 
 @dataclass(frozen=True, order=True)

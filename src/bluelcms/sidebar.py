@@ -94,7 +94,7 @@ class MeasurementTree(QTreeWidget):
             sample, replicate = "", 1
         date_rank = -int(date.replace("_", "")) if date else 0
         item.sort_key = (1, 0 if date else 1, date_rank, sample.casefold(), replicate, anchor.name.casefold())
-        root = next((root for root in self.roots if anchor.is_relative_to(root)), anchor.parent)
+        root = next((root for root in self.roots if anchor != root and anchor.is_relative_to(root)), anchor.parent)
         parent = self._folder(root, root.name or str(root))
         directory = root
         for part in anchor.parent.relative_to(root).parts:

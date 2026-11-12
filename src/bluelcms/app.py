@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
     QTableWidget, QTableWidgetItem, QToolBar, QToolButton, QLineEdit, QMenu, QSlider, QVBoxLayout, QWidget, QInputDialog)
 
 from . import settings
+from .aia import aia_fingerprint, is_aia, load_aia_cached
 from .deconvolution import SPECIES_COLORS, deconvolute_histograms
 from .deconvolution_dialog import DeconvolutionDialog
 from .folders import cached_path, cleanup_expired_cache, is_afp_path, legacy_cached_path
@@ -54,7 +55,7 @@ def integration_anchor(source):
 
 def integration_beside_source(source):
     """Vendor folders are usually read-only shares, so never write beside them."""
-    return not isinstance(source, VendorMeasurement) and source.is_file()
+    return not isinstance(source, VendorMeasurement) and not is_aia(source) and source.is_file()
 
 
 def measurement_tooltip(measurement) -> str:
@@ -79,6 +80,8 @@ def cache_metadata(source):
         return json.dumps({"vendor": True, "date": source.key.date, "sample": source.key.sample,
                            "replicate": source.key.replicate, "agilent": str(source.agilent),
                            "positive": str(source.advion_positive), "negative": str(source.advion_negative)})
+    if is_aia(source):
+        return json.dumps({"path": str(source), "source_type": "aia", "fingerprint": aia_fingerprint(source)})
     return json.dumps({"path": str(source)})
 
 
@@ -107,7 +110,7 @@ def discover_cached_measurements(folder):
 def source_available(source):
     if isinstance(source, VendorMeasurement):
         return source.agilent.is_dir() and source.advion_positive.is_file() and source.advion_negative.is_file()
-    return source.is_file()
+    return source.is_dir() if is_aia(source) and source.suffix.lower() == ".aia" else source.is_file()
 
 
 def measurement_state_icon(state):
@@ -266,10 +269,24 @@ class LoadJob(PausableLoadJob):
             self.signals.done.emit(self.token, result, "")
 
 
+class AiaLoadJob(PausableLoadJob):
+    def __init__(self, token, path, cache):
+        super().__init__(token, load_aia_cached, path, cache)
+
+    def run(self):
+        try:
+            self.checkpoint()
+            result = load_aia_cached(*self.args, progress=self.report_progress)
+        except Exception as error:
+            self.signals.done.emit(self.token, None, str(error))
+        else:
+            self.signals.done.emit(self.token, result, "")
+
+
 class LocationsDialog(QDialog):
     def __init__(self, locations, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("mzML locations")
+        self.setWindowTitle("Measurement locations (mzML / AIA)")
         self.resize(620, 320)
         self.locations = QListWidget()
         self.locations.addItems([str(path) for path in locations])
@@ -281,7 +298,7 @@ class LocationsDialog(QDialog):
         actions = QHBoxLayout(); actions.addWidget(add); actions.addWidget(remove); actions.addStretch(); layout.addLayout(actions); layout.addWidget(buttons)
 
     def add_folder(self):
-        if folder := QFileDialog.getExistingDirectory(self, "Add mzML folder", str(Path.home())):
+        if folder := QFileDialog.getExistingDirectory(self, "Add measurement folder (mzML / AIA)", str(Path.home())):
             if folder not in [self.locations.item(index).text() for index in range(self.locations.count())]:
                 self.locations.addItem(folder)
 
@@ -405,7 +422,7 @@ class MainWindow(QMainWindow):
         for entry in settings.extracted_tics():
             self.create_xic_button(entry["mass"], entry["radius"], entry["enabled"])
         menu = self.menuBar().addMenu("Settings")
-        for text, slot in (("Manage mzML locations…", self.choose_folder),
+        for text, slot in (("Manage measurement locations…", self.choose_folder),
                            ("Choose local cache folder…", self.choose_cache_folder),
                            ("Open debug terminal…", self.open_debug_terminal),
                            ("Refresh file list", self.refresh_files)):
@@ -453,6 +470,11 @@ class MainWindow(QMainWindow):
         self.folder_label.setWordWrap(True)
         self.wavelength = QSpinBox(); self.wavelength.setRange(1, 2000); self.wavelength.setValue(254); self.wavelength.setSuffix(" nm")
         self.wavelength.valueChanged.connect(self.draw_uv)
+        self.chromatogram_channel_label = QLabel("Recorded chromatogram channel")
+        self.chromatogram_channel = QComboBox()
+        self.chromatogram_channel.addItem("All channels", None)
+        self.chromatogram_channel.currentIndexChanged.connect(self.change_chromatogram_channel)
+        self.chromatogram_channel_label.hide(); self.chromatogram_channel.hide()
         self.mode = QComboBox(); self.mode.addItems(("UV traces", "DAD heatmap")); self.mode.currentIndexChanged.connect(self.update_heatmap_controls); self.mode.currentIndexChanged.connect(self.draw_uv)
         self.heatmap_sensitivity_label = QLabel("Heatmap color scale (%)")
         self.heatmap_sensitivity = QSpinBox(); self.heatmap_sensitivity.setRange(0, 100)
@@ -483,7 +505,11 @@ class MainWindow(QMainWindow):
         self.cache_expiry.setToolTip("Cached files are automatically removed after this many days (0 = never expire)")
         self.cache_expiry.valueChanged.connect(self.set_cache_expiry)
         controls = QWidget(); controls_layout = QVBoxLayout(controls); controls_layout.addWidget(QLabel("Wavelength")); controls_layout.addWidget(self.wavelength); controls_layout.addWidget(self.mode); controls_layout.addWidget(self.heatmap_sensitivity_label); controls_layout.addWidget(self.heatmap_sensitivity); controls_layout.addWidget(self.heatmap_baseline_label); controls_layout.addWidget(self.heatmap_baseline); controls_layout.addWidget(self.heatmap_palette_label); controls_layout.addWidget(self.heatmap_palette); controls_layout.addWidget(self.heatmap_auto); controls_layout.addWidget(QLabel("Cache expiry")); controls_layout.addWidget(self.cache_expiry); controls_layout.addWidget(self.folder_label); controls_layout.addWidget(self.files)
+        controls_layout.insertWidget(3, self.chromatogram_channel_label)
+        controls_layout.insertWidget(4, self.chromatogram_channel)
         self.uv, self.positive, self.negative = UVPlot(), MassPlot("Positive ions"), MassPlot("Negative ions")
+        self.chromatogram_legend = self.uv.addLegend()
+        self.chromatogram_legend.hide()
         self.uv_spectrum_dock = QDockWidget("UV spectrum at cursor", self)
         self.uv_spectrum_plot = pg.PlotWidget()
         self.uv_spectrum_plot.setLabel("bottom", "Wavelength", units="nm")
@@ -582,7 +608,7 @@ class MainWindow(QMainWindow):
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
         self.uv.region.sigRegionChanged.connect(self.invalidate_interval_deconvolution)
         self.uv.integrate_requested.connect(self.integrate_region)
-        self.statusBar().showMessage("Choose an mzML folder from Settings.")
+        self.statusBar().showMessage("Choose a measurement folder from Settings.")
         if self.folders or settings.cache_folder(): self.refresh_files()
         removed = cleanup_expired_cache(settings.cache_folder(), settings.cache_expiry_days())
         if removed:
@@ -712,6 +738,43 @@ class MainWindow(QMainWindow):
         job = Job(token, function, *args); self.jobs.add(job)
         job.signals.done.connect(lambda t, result, error: callback(t, result, error) if not self.closing else None)
         job.signals.done.connect(lambda *_: self.jobs.discard(job)); self.pool.start(job)
+
+    def change_chromatogram_channel(self):
+        self.draw_uv()
+        self.refresh_integration_table()
+
+    def update_chromatogram_controls(self):
+        names = sorted({trace.name for run in self.runs.values() for trace in run.chromatograms})
+        current = self.chromatogram_channel.currentData()
+        choices = [self.chromatogram_channel.itemData(i) for i in range(1, self.chromatogram_channel.count())]
+        if choices != names:
+            self.chromatogram_channel.blockSignals(True)
+            self.chromatogram_channel.clear()
+            self.chromatogram_channel.addItem("All channels", None)
+            for name in names:
+                self.chromatogram_channel.addItem(name, name)
+            self.chromatogram_channel.setCurrentIndex(max(0, self.chromatogram_channel.findData(current)))
+            self.chromatogram_channel.blockSignals(False)
+        self.chromatogram_channel.setVisible(bool(names))
+        self.chromatogram_channel_label.setVisible(bool(names))
+        self.chromatogram_legend.setVisible(bool(names))
+        recorded_only = bool(self.runs) and all(run.chromatograms and not run.dad for run in self.runs.values())
+        self.wavelength.setEnabled(not recorded_only)
+        self.mode.setEnabled(not recorded_only)
+        if recorded_only:
+            self.uv_spectrum_curve.setData([], [])
+            self.uv_spectrum_plot.setTitle("UV spectrum unavailable — recorded chromatograms only")
+        if recorded_only and self.mode.currentText() != "UV traces":
+            self.mode.blockSignals(True); self.mode.setCurrentText("UV traces"); self.mode.blockSignals(False)
+            self.update_heatmap_controls()
+        source = self.selected_integration_source()
+        if source is not None and self.runs[source].chromatograms:
+            traces = self.selected_chromatograms(self.runs[source])
+            self.uv.integration_enabled = len(traces) == 1
+
+    def selected_chromatograms(self, run):
+        channel = self.chromatogram_channel.currentData()
+        return tuple(trace for trace in run.chromatograms if channel is None or trace.name == channel)
 
     def submit_load(self, token, path, source, source_label, callback):
         job = LoadJob(token, source, self.wavelength.value())
@@ -1253,6 +1316,8 @@ class MainWindow(QMainWindow):
         return legacy_cached_path(source, settings.cache_folder())
 
     def load_source_label(self, path, source):
+        if is_aia(path) and source == path:
+            return "original remote AIA chromatograms" if is_afp_path(path) else "original local AIA chromatograms"
         if self.cached_measurements.get(path) == source:
             return "compact local cache" if source.name.endswith(".bluelcms.npz") else "cached mzML"
         if source == path:
@@ -1308,10 +1373,10 @@ class MainWindow(QMainWindow):
             self.invalidate_deconvolution()
         self.folder_token += 1
         if not self.folders and settings.cache_folder() is None:
-            self.folder_label.setText("Add mzML locations in Settings")
-            self.statusBar().showMessage("No mzML locations configured.")
+            self.folder_label.setText("Add measurement locations in Settings")
+            self.statusBar().showMessage("No measurement locations configured.")
             return
-        self.folder_label.setText(f"{len(self.folders)} mzML location{'s' if len(self.folders) != 1 else ''}")
+        self.folder_label.setText(f"{len(self.folders)} measurement location{'s' if len(self.folders) != 1 else ''}")
         self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
         self.new_measurements = set()
         self.source_history = {folder: history for folder, history in self.source_history.items() if folder in self.folders}
@@ -1398,9 +1463,9 @@ class MainWindow(QMainWindow):
         pairs = len(self.discovered_measurements)
         found = self.files.count() - pairs
         if self.discovery_errors:
-            self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements found; {len(self.discovery_errors)} location(s) could not be read.")
+            self.statusBar().showMessage(f"{found} mzML/AIA measurements and {pairs} Agilent+Advion measurements found; {len(self.discovery_errors)} location(s) could not be read.")
         else:
-            self.statusBar().showMessage(f"{found} mzML files and {pairs} Agilent+Advion measurements across {len(self.folders)} location(s). Select one or more." if self.files.count() else "No mzML files or matched measurements found in configured locations.")
+            self.statusBar().showMessage(f"{found} mzML/AIA measurements and {pairs} Agilent+Advion measurements across {len(self.folders)} location(s). Select one or more." if self.files.count() else "No mzML/AIA files or matched measurements found in configured locations.")
 
     def notify_new_measurements(self, paths):
         names = sorted(path.name for path in paths)
@@ -1509,7 +1574,7 @@ class MainWindow(QMainWindow):
         path = next((source for source, cache in self.cached_measurements.items() if cache == path and isinstance(source, Path)), path)
         cache = self.cache_for(path)
         cached = bool(cache and cache.is_file())
-        if not path.is_file() and not cached:
+        if not source_available(path) and not cached:
             QMessageBox.warning(self, "Cannot open measurement", f"The file is unavailable and no local cache was found:\n{path}")
             return
         outside_sources = not any(path.is_relative_to(folder) for folder in self.folders)
@@ -1541,7 +1606,7 @@ class MainWindow(QMainWindow):
             self.apply_external_view()
             if self.cache_policy.get(path, True) and settings.cache_folder() and not cached:
                 cache = self.cache_for(path)
-                self.submit(self.load_token, write_compact_cache, lambda t, result, error: self.cached(t, path, result, error), self.runs[path], cache, cache_metadata(path))
+                self.submit(self.load_token, write_compact_cache, lambda t, result, error: self.cached(t, path, result, error), self.runs[path], cache, self.runs[path].source_metadata or cache_metadata(path))
         self.refresh_cache_indicators()
 
     def apply_external_view(self):
@@ -1564,6 +1629,7 @@ class MainWindow(QMainWindow):
             start = end = min(scans, key=lambda scan: abs(scan.time - request.time)).time
         if start is not None:
             times = [scan.time for scan in run.scans] + [scan.time for scan in run.dad]
+            times.extend(float(value) for trace in run.chromatograms for value in (trace.times[0], trace.times[-1]))
             if not times or end < min(times) or start > max(times):
                 QMessageBox.warning(self, "Spectrum unavailable", "The requested interval is outside this measurement's time range.")
                 return
@@ -1606,6 +1672,17 @@ class MainWindow(QMainWindow):
         self.set_loading(True)
         self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()}…"); self.progress.show()
         cache = self.cache_for(path)
+        if is_aia(path):
+            job = AiaLoadJob(token, path, cache)
+            self.jobs.add(job); self.load_jobs[path] = job
+            job.signals.progress.connect(lambda t, done, total, p=path: self.load_progress(t, p, "AIA chromatograms", done, total))
+            def ready(t, result, error, p=path):
+                self.loaded(t, p, None if error else result.run, error,
+                            refresh_cache=False if error else result.refresh_cache)
+            job.signals.done.connect(ready)
+            job.signals.done.connect(lambda *_: self.jobs.discard(job))
+            self.pool.start(job)
+            return
         if isinstance(path, VendorMeasurement) and not (cache and cache.is_file()):
             self.submit_vendor_load(token, path)
             return
@@ -1623,8 +1700,7 @@ class MainWindow(QMainWindow):
         self.load_token = token
         self.pool.setMaxThreadCount(3 + len(self.paused_loads))
         if path in self.deferred_results:
-            run, error = self.deferred_results.pop(path)
-            self.loaded(token, path, run, error)
+            self.loaded(token, path, *self.deferred_results.pop(path))
         else:
             self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()}…"); self.progress.show()
             selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
@@ -1673,11 +1749,11 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()} {measurement.label}…"); self.progress.show()
         self.pool.start(job)
 
-    def loaded(self, token, path, run, error):
+    def loaded(self, token, path, run, error, refresh_cache=False):
         if self.closing:
             return
         if path in self.paused_loads and token == self.paused_loads[path][1]:
-            self.deferred_results[path] = (run, error)
+            self.deferred_results[path] = (run, error, refresh_cache)
             return
         if token != self.load_token: return
         self.load_jobs.pop(path, None)
@@ -1701,14 +1777,14 @@ class MainWindow(QMainWindow):
                 self.set_loading(False)
             self.draw_uv()
         cache = self.cache_for(path)
-        if cache and not cache.is_file() and self.cache_policy.get(path, True):
+        if cache and (not cache.is_file() or refresh_cache) and self.cache_policy.get(path, True):
             name = path.label if isinstance(path, VendorMeasurement) else path.name
             self.progress.setRange(0, 0); self.progress.setFormat(f"Compacting {self.queue_marker()} {name}…"); self.progress.show()
-            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
+            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, run.source_metadata or cache_metadata(path))
         elif cache and cache.is_file() and not cache_has_previews(cache):
             # Backfill portable PNGs and update the standard desktop thumbnail
             # cache the first time a pre-preview compact cache is opened.
-            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, cache_metadata(path))
+            self.submit(token, write_compact_cache, lambda t, result, error, p=path: self.cached(t, p, result, error), run, cache, run.source_metadata or cache_metadata(path))
         self.finish_load(path)
 
     def selected_integration_source(self):
@@ -1719,22 +1795,41 @@ class MainWindow(QMainWindow):
         source = self.selected_integration_source()
         self.integrations, self.integration_source = [], source
         if source is not None:
-            records, _, stale = load_integrations(integration_anchor(source), settings.integration_folder(), integration_beside_source(source))
+            records, _, stale = load_integrations(integration_anchor(source), settings.integration_folder(), integration_beside_source(source),
+                                                  fingerprint=self.integration_fingerprint(source))
             self.integrations = records
             self.integration_dock.setWindowTitle("UV integrations (source changed)" if stale else "UV integrations")
         self.refresh_integration_table()
 
+    def integration_fingerprint(self, source):
+        run = self.runs.get(source)
+        if run is not None and run.source_metadata:
+            metadata = json.loads(run.source_metadata)
+            if metadata.get("source_type") == "aia":
+                return metadata.get("fingerprint")
+        return None
+
     def refresh_integration_table(self):
         self.integration_table.setRowCount(len(self.integrations))
-        total = sum(record["absolute_integral"] for record in self.integrations)
+        self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Channel / nm", "Absolute integral", "% of integrals"))
         for row, record in enumerate(self.integrations):
+            # Recorded LC channels have independent area totals. Preserve the
+            # existing UV wavelength-integration percentage convention.
+            group = (record.get("channel"), record.get("unit"))
+            matching = [other for other in self.integrations if (other.get("channel"), other.get("unit")) == group]
+            total = sum(other["absolute_integral"] for other in matching)
+            channel = record.get("channel")
+            wavelength = record.get("wavelength_nm")
             values = (
                 f"{record['start_min']:.4f}", f"{record['stop_min']:.4f}",
-                f"{record['wavelength_nm']:g}", f"{record['absolute_integral']:.6g}",
-                f"{100 * record['absolute_integral'] / total:.2f}%" if len(self.integrations) > 1 and total else "",
+                channel or (f"{wavelength:g}" if wavelength is not None else ""), f"{record['absolute_integral']:.6g}",
+                f"{100 * record['absolute_integral'] / total:.2f}%" if len(matching) > 1 and total else "",
             )
             for column, value in enumerate(values):
-                self.integration_table.setItem(row, column, QTableWidgetItem(value))
+                item = QTableWidgetItem(value)
+                if record.get("unit"):
+                    item.setToolTip(f"Integrated channel {channel}; area in {record['unit']}·min")
+                self.integration_table.setItem(row, column, item)
         self.integration_table.resizeColumnsToContents()
 
     def integrate_region(self):
@@ -1743,7 +1838,17 @@ class MainWindow(QMainWindow):
             return
         start, stop = self.uv.region.getRegion()
         target = self.wavelength.value()
-        times, signal, _ = self.runs[source].uv_trace(target)
+        run = self.runs[source]
+        channel = None
+        if run.chromatograms:
+            traces = self.selected_chromatograms(run)
+            if len(traces) != 1:
+                self.statusBar().showMessage("Choose a single recorded chromatogram channel before integrating.")
+                return
+            channel = traces[0]
+            times, signal = channel.times, channel.values
+        else:
+            times, signal, _ = run.uv_trace(target)
         try:
             integral = integrate_trace(times, signal, start, stop)
         except ValueError as error:
@@ -1751,9 +1856,13 @@ class MainWindow(QMainWindow):
             return
         if self.integration_source != source:
             self.refresh_integrations()
-        self.integrations.append({"start_min": min(start, stop), "stop_min": max(start, stop), "wavelength_nm": target, "absolute_integral": integral})
+        record = {"start_min": min(start, stop), "stop_min": max(start, stop), "wavelength_nm": target, "absolute_integral": integral}
+        if channel is not None:
+            record.update(channel=channel.name, unit=channel.unit, wavelength_nm=channel.wavelength_nm)
+        self.integrations.append(record)
         try:
-            save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source))
+            save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source),
+                              fingerprint=self.integration_fingerprint(source))
         except OSError as error:
             self.integrations.pop()
             self.statusBar().showMessage(f"Could not save integration: {error}")
@@ -1768,14 +1877,16 @@ class MainWindow(QMainWindow):
         if source is None or not selected:
             return
         del self.integrations[selected[0].row()]
-        save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source))
+        save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source),
+                          fingerprint=self.integration_fingerprint(source))
         self.refresh_integration_table()
 
     def clear_integrations(self):
         if self.integration_source is None or not self.integrations:
             return
         self.integrations.clear()
-        save_integrations(integration_anchor(self.integration_source), settings.integration_folder(), self.integrations, integration_beside_source(self.integration_source))
+        save_integrations(integration_anchor(self.integration_source), settings.integration_folder(), self.integrations, integration_beside_source(self.integration_source),
+                          fingerprint=self.integration_fingerprint(self.integration_source))
         self.refresh_integration_table()
 
     def streamed_uv_points(self, token, path, points):
@@ -1831,7 +1942,7 @@ class MainWindow(QMainWindow):
 
     def set_loading(self, visible):
         for plot in (self.uv, self.positive, self.negative): loading_overlay(plot, visible)
-        if visible: self.loading_timer.start(); self.statusBar().showMessage("Loading mzML data…")
+        if visible: self.loading_timer.start(); self.statusBar().showMessage("Loading measurement data…")
         else: self.loading_timer.stop()
 
     def animate_loading(self):
@@ -1840,6 +1951,7 @@ class MainWindow(QMainWindow):
             if hasattr(plot, "loading") and plot.loading.isVisible(): plot.loading.setText("Loading" + "." * self.loading_phase)
 
     def draw_uv(self):
+        self.update_chromatogram_controls()
         if self.mode.currentText() == "DAD heatmap":
             self.draw_dad_heatmap()
             return
@@ -1865,10 +1977,11 @@ class MainWindow(QMainWindow):
         show_tic = bool(enabled_polarities)
         enabled_xics = [mass for mass, entry in self.xic_entries.items() if entry["enabled"]]
         self.uv.setLabel("right", "MS TIC / extracted TIC" if enabled_xics else "MS TIC")
-        self.uv.showAxis("right", show_tic or bool(enabled_xics))
+        recorded_only = bool(self.runs) and all(run.chromatograms and not run.dad and not run.scans for run in self.runs.values())
+        self.uv.showAxis("right", (show_tic or bool(enabled_xics)) and not recorded_only)
         if loading:
             loading_overlay(self.uv, True)
-        if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML files"); return
+        if not self.runs and not self.stream_uv: self.uv.setTitle("UV / DAD — select one or more mzML/AIA measurements"); return
         target = self.wavelength.value()
         all_times = []
         tic_by_polarity = {"+": {}, "-": {}}
@@ -1884,6 +1997,13 @@ class MainWindow(QMainWindow):
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
                 tic = self.stream_tic.get(path, [])
             name = path.name if isinstance(path, Path) else path.label
+            if path in self.runs and self.runs[path].chromatograms:
+                for channel_index, trace in enumerate(self.selected_chromatograms(self.runs[path])):
+                    color = COLORS[(index + channel_index * max(1, len(selected))) % len(COLORS)]
+                    style = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)[channel_index % 3]
+                    self.uv.plot(trace.times, trace.values, pen=pg.mkPen(color, width=2, style=style),
+                                 name=f"{name} — {trace.name}" + (f" ({trace.unit})" if trace.unit else ""))
+                    all_times.extend((float(trace.times[0]), float(trace.times[-1])))
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=name); all_times.extend(times)
             elif path in self.runs:
                 all_times.extend(scan.time for scan in self.runs[path].scans)
@@ -1918,7 +2038,14 @@ class MainWindow(QMainWindow):
         title = "UV / DAD" + "".join(f" + MS TIC ({polarity})" for polarity in ("+", "-") if polarity in enabled_polarities)
         if enabled_xics:
             title += " + extracted TIC"
-        self.uv.setLabel("left", "UV signal"); self.uv.setTitle(f"{title} — target {target} nm{suffix}; drag to select time")
+        if recorded_only:
+            units = {trace.unit for run in self.runs.values() for trace in self.selected_chromatograms(run)}
+            unit = next(iter(units)) if len(units) == 1 else ""
+            self.uv.setLabel("left", "Absorbance" if unit.casefold() == "mau" else "Signal", units=unit)
+            channel = self.chromatogram_channel.currentText()
+            self.uv.setTitle(f"Recorded chromatograms — {channel}; drag to select time (wavelength not recorded)")
+        else:
+            self.uv.setLabel("left", "UV signal", units=""); self.uv.setTitle(f"{title} — target {target} nm{suffix}; drag to select time")
         if all_times:
             bounds = (min(all_times), max(all_times))
             self.uv.region.setBounds(bounds)

@@ -23,8 +23,8 @@ class OpenRequest:
     def __post_init__(self):
         if not isinstance(self.path, str) or not self.path:
             raise ValueError("A measurement path is required.")
-        if Path(self.path).suffix.lower() not in (".mzml", ".gz", ".npz"):
-            raise ValueError("External requests support mzML, compressed mzML, and BlueLCMS cache files.")
+        if Path(self.path).suffix.lower() not in (".mzml", ".gz", ".npz", ".aia", ".cdf"):
+            raise ValueError("External requests support mzML, compressed mzML, AIA folders, CDF chromatograms, and BlueLCMS cache files.")
         if (self.start is None) != (self.end is None):
             raise ValueError("Specify both --start and --end.")
         for value in (self.start, self.end, self.time):
