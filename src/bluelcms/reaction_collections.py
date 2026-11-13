@@ -69,7 +69,7 @@ class ReactionTarget:
     channel: str
     start_min: float
     end_min: float
-    baseline: str = "midpoint"
+    baseline: str = "endpoints"
     color: str = COLORS[0]
 
 
@@ -78,7 +78,7 @@ class IndividualIntegration:
     channel: str
     start_min: float
     end_min: float
-    baseline: str = "midpoint"
+    baseline: str = "endpoints"
     baseline_start: float | None = None
     baseline_end: float | None = None
 
@@ -142,7 +142,7 @@ class ReactionCollection:
                 _number(spec.baseline_end, "Baseline end height")
 
 
-def integration_curve(trace, start, end, baseline="midpoint", baseline_start=None, baseline_end=None):
+def integration_curve(trace, start, end, baseline="endpoints", baseline_start=None, baseline_end=None):
     """Interpolate boundary samples and return the recorded and baseline curves."""
     validate_trace(trace)
     start, end = _window(start, end)
@@ -341,7 +341,7 @@ def save_collection(collection, path, include_csv=False):
                              "Open CSV tables in Excel/LibreOffice/Python/R after unzipping.\n"
                              "manifest.json is authoritative; opening recalculates integrations.\n"
                              "Reaction and retention times are minutes. Blank time means unassigned.\n"
-                             "Default midpoint baseline is horizontal at the average signal at the two limits.\n"
+                             "Default endpoint baseline joins the recorded trace at the two limits; markers are generated on integration request.\n"
                              "Manual baseline endpoint heights and individual measurement/compound windows are stored in the manifest and integrations.csv.\n"
                              "Common-window mode, endpoint-line and zero baselines remain supported.\n"
                              "Areas are SIGNED signal-unit * minute integrals. Negative/missing areas are not used in ratios.\n"

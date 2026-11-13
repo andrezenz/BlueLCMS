@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPaintDevice
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
@@ -15,6 +15,15 @@ from bluelcms.reaction_collections import load_collection
 from bluelcms.reaction_dialog import ReactionCollectionDialog
 from test_aia import make_aia
 from test_reaction_collections import kinetics
+
+
+def close_collection(dialog, app):
+    dialog.dirty = False
+    dialog.close()
+    # processEvents alone does not drain DeferredDelete without a running exec
+    # loop. Retain wrappers until Qt has retired table editors and the dialog.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 def test_editor_preserves_qt_paint_metrics_and_renders(monkeypatch):
@@ -37,7 +46,7 @@ def test_editor_preserves_qt_paint_metrics_and_renders(monkeypatch):
         app.processEvents()
         assert len(dialog.progress.plotItem.listDataItems()) == 2
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_editor_time_points_windows_ratios_plots_and_save(tmp_path):
@@ -77,7 +86,7 @@ def test_editor_time_points_windows_ratios_plots_and_save(tmp_path):
         for curve in dialog.progress.plotItem.listDataItems():
             assert len(curve.xData) == 2
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_editor_add_remove_target_and_common_window(tmp_path):
@@ -97,7 +106,7 @@ def test_editor_add_remove_target_and_common_window(tmp_path):
         assert not dialog.collection.targets
         assert dialog.collection.ratio_reference is None
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_opening_editor_does_not_round_saved_times_or_windows(tmp_path):
@@ -111,7 +120,7 @@ def test_opening_editor_does_not_round_saved_times_or_windows(tmp_path):
         assert dialog.collection.targets[0].start_min == collection.targets[0].start_min
         assert not dialog.dirty
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_unsaved_collection_cannot_be_closed_on_cancel_or_failed_save(monkeypatch):
@@ -126,7 +135,7 @@ def test_unsaved_collection_cannot_be_closed_on_cancel_or_failed_save(monkeypatc
         monkeypatch.setattr(dialog, "save", lambda: False)
         assert not dialog.close()
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_individual_integrals_named_compounds_baseline_drag_and_separate_plot(tmp_path):
@@ -136,18 +145,27 @@ def test_individual_integrals_named_compounds_baseline_drag_and_separate_plot(tm
     dialog = ReactionCollectionDialog(collection)
     try:
         assert not dialog.plot_progress_button.isEnabled()
+        assert all(not point.isVisible() for point in dialog.baseline_editor.points)
         dialog.window_region.setRegion((.5, 1.5))
         dialog.compound_name.setEditText("A")
+        dialog.integrate_measurement()
+        assert dialog.results_table.rowCount() == 0
+        assert dialog.baseline_editor.points[0].isVisible()
         dialog.integrate_measurement()
         assert dialog.results_table.rowCount() == 1
         assert dialog.results[0]["area_percent"] == pytest.approx(100)
         dialog.samples_table.selectRow(1)
         dialog.window_region.setRegion((.5, 1.5))
         dialog.integrate_measurement()
+        dialog.integrate_measurement()
         dialog.compound_name.setEditText("B")
         dialog.window_region.setRegion((2.5, 3.5))
         dialog.integrate_measurement()
+        dialog.integrate_measurement()
         assert dialog.results_table.rowCount() == 3
+        dialog.results_table.selectRow(2)
+        assert dialog.baseline_editor.points[0].isVisible()
+        assert dialog.baseline_editor.points[0].pos().y() == pytest.approx(15.)
         assert dialog.plot_progress_button.isEnabled()
         plot = dialog.open_progress_plot()
         assert plot is not None and plot is not dialog
@@ -157,7 +175,8 @@ def test_individual_integrals_named_compounds_baseline_drag_and_separate_plot(tm
         dialog.samples_table.item(1, 1).setText("7.5")
         assert 7.5 in plot.plot.plotItem.listDataItems()[0].xData
         editor = dialog.baseline_editor
-        assert editor.points[0].pos().y() == pytest.approx(16)
+        assert editor.points[0].pos().y() == pytest.approx(15)
+        assert editor.points[1].pos().y() == pytest.approx(17)
         editor.points[0].setPos(2.5, 15.)
         editor.points[1].setPos(3.5, 15.)
         editor.finish_edit()
@@ -171,7 +190,7 @@ def test_individual_integrals_named_compounds_baseline_drag_and_separate_plot(tm
         assert dialog.save()
         assert load_collection(dialog.path).individual_integrations[("m1", target_b.id)].baseline_end == 15.
     finally:
-        dialog.dirty = False; dialog.close(); app.processEvents()
+        close_collection(dialog, app)
 
 
 def test_toolbar_creates_selected_collection_and_reopens_archive(tmp_path, monkeypatch):
@@ -217,4 +236,6 @@ def test_toolbar_creates_selected_collection_and_reopens_archive(tmp_path, monke
     finally:
         for dialog in list(window.reaction_windows):
             dialog.dirty = False
-        window.close(); app.processEvents()
+        window.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()

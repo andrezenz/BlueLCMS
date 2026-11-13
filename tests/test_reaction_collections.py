@@ -193,9 +193,11 @@ def test_individual_compound_assignments_percentages_manual_baseline_and_roundtr
 
 def test_horizontal_midpoint_and_manual_baselines_are_reproducible():
     trace = Chromatogram("DAD1A", np.array([0., 1., 2.]), np.array([0., 5., 2.]), "mAU")
-    x, y, baseline = integration_curve(trace, 0, 2)
+    x, y, baseline = integration_curve(trace, 0, 2, "midpoint")
     np.testing.assert_array_equal(baseline, [1, 1, 1])
     assert np.trapezoid(y - baseline, x) == pytest.approx(4)
+    _, _, baseline = integration_curve(trace, 0, 2)
+    np.testing.assert_array_equal(baseline[[0, -1]], trace.values[[0, -1]])
     x, y, baseline = integration_curve(trace, 0, 2, "manual", 3, 3)
     assert np.trapezoid(y - baseline, x) == pytest.approx(0)
 

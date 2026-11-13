@@ -4,7 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPen
-from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QMenu
+from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem, QGraphicsRectItem, QMenu
 
 from .integrations import baseline_curve
 
@@ -18,7 +18,7 @@ class BaselineEditor(QObject):
         self.plot, self.region = plot, region
         self.updating = False
         self.trace = None
-        self.method = "midpoint"
+        self.method = "endpoints"
         self.heights = None
         self.line = QGraphicsLineItem()
         self.line.setPen(pg.mkPen("#f3ae57", width=2))
@@ -32,7 +32,7 @@ class BaselineEditor(QObject):
             point.sigPositionChangeFinished.connect(self.finish_edit)
         region.sigRegionChanged.connect(self.refresh)
 
-    def set_trace(self, times=None, values=None, method="midpoint", heights=None):
+    def set_trace(self, times=None, values=None, method="endpoints", heights=None):
         if self.updating:
             return
         self.trace = None if times is None else (times, values)
@@ -83,6 +83,39 @@ class BaselineEditor(QObject):
     def finish_edit(self, *_):
         if not self.updating and self.trace is not None and self.heights is not None:
             self.edited.emit(*map(float, self.region.getRegion()), *map(float, self.heights))
+
+
+class IntegrationAreaItem(QGraphicsPathItem):
+    """Positive area between an integration baseline and recorded trace."""
+    def __init__(self, times, signal, baseline, selected=False, tooltip="", color=None):
+        super().__init__()
+        self.interval = (float(times[0]), float(times[-1]))
+        x, y, base = np.asarray(times), np.asarray(signal), np.asarray(baseline)
+        difference = y - base
+        crossings = np.flatnonzero(difference[:-1] * difference[1:] < 0)
+        if len(crossings):
+            fraction = difference[crossings] / (difference[crossings] - difference[crossings + 1])
+            crossing_x = x[crossings] + fraction * (x[crossings + 1] - x[crossings])
+            crossing_y = base[crossings] + fraction * (base[crossings + 1] - base[crossings])
+            order = np.argsort(np.r_[x, crossing_x], kind="stable")
+            x, y, base = np.r_[x, crossing_x][order], np.r_[y, crossing_y][order], np.r_[base, crossing_y][order]
+        # Vectorized path creation keeps live limit/baseline editing responsive
+        # even for full-length 10k–18k-point AIA chromatograms.
+        path = pg.arrayToQPath(np.r_[x, x[::-1]], np.r_[np.maximum(y, base), base[::-1]], connect="all", finiteCheck=False)
+        path.closeSubpath()
+        self.setPath(path)
+        fill = QColor(color) if color else QColor("#ffc146" if selected else "#87a9c3")
+        edge = QColor(fill)
+        fill.setAlpha(125 if selected else 80); edge.setAlpha(220 if selected else 105)
+        self.setBrush(QBrush(fill))
+        self.setPen(pg.mkPen(edge, width=2 if selected else 1))
+        self.setZValue(-5 if selected else -10)
+        self.setToolTip(tooltip)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+
+    def getRegion(self):
+        return self.interval
 
 
 def pixel_buckets(x, y, minimum, maximum, pixels):
@@ -183,18 +216,19 @@ class RegionViewBox(ResetViewBox):
         if delta:
             event.accept()
             low, high = self.viewRange()[1]
-            if low != 0:
-                low = min(low, 0.0)
-            if high == 0:
-                high = 1.0
             factor = 0.9 ** (delta / 120)
-            self.setYRange(0, high * factor, padding=0)
+            span = max(np.finfo(float).eps, high - low)
+            self.setYRange(low, low + span * factor, padding=0)
             return
         super().wheelEvent(event, axis)
 
     def mouseDragEvent(self, event, axis=None):
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
+            if axis in (0, 1):
+                shift = self.mapToView(event.lastPos()) - self.mapToView(event.pos())
+                self.translateBy(**({"x": shift.x()} if axis == 0 else {"y": shift.y()}))
+                return
             start = self.mapToView(event.buttonDownPos())
             end = self.mapToView(event.pos())
             if self.heatmap_mode:
@@ -273,19 +307,8 @@ class UVPlot(pg.PlotWidget):
         for item in self.integration_highlights:
             self.removeItem(item)
         self.integration_highlights = []
-        for start, stop, selected, tooltip in windows:
-            fill = QColor(255, 193, 70, 90) if selected else QColor(135, 149, 161, 30)
-            edge = QColor(255, 193, 70, 220) if selected else QColor(135, 149, 161, 65)
-            item = pg.LinearRegionItem((start, stop), movable=False,
-                                       brush=fill, hoverBrush=fill,
-                                       pen=pg.mkPen(edge, width=2 if selected else 1))
-            item.setZValue(-5 if selected else -10)
-            item.setToolTip(tooltip)
-            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-            item.setAcceptHoverEvents(False)
-            for line in item.lines:
-                line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-                line.setAcceptHoverEvents(False)
+        for times, signal, baseline, selected, tooltip in windows:
+            item = IntegrationAreaItem(times, signal, baseline, selected, tooltip)
             self.addItem(item, ignoreBounds=True)
             self.integration_highlights.append(item)
 

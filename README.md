@@ -104,6 +104,10 @@ updates the existing shortcut. To remove the shortcut, delete
 In mass spectra, scroll over the bottom **m/z** axis to zoom horizontally around
 the cursor. Scrolling inside the plotting area zooms intensity while keeping
 zero fixed. Positive and negative spectra share the same m/z range.
+For the upper UV chromatogram, wheel zoom changes only the y span and keeps its
+current lower y-value fixed, including nonzero or negative values. Dragging the
+y-axis pans vertically; dragging the x-axis pans horizontally. Dragging inside
+the plot continues to select an integration/time interval.
 Dragging across a mass spectrum highlights the proposed horizontal zoom range
 until the mouse is released.
 Hover inside either mass-spectrum plot to show a vertical cursor guideline and
@@ -239,13 +243,15 @@ used. The original files and individual integration sidecars are not modified.
    Duplicate times retain individual replicates without automatic averaging.
 2. New collections start in **Integrate measurements individually** mode. Select
    a measurement and channel, drag the interval limits, and enter **A**, **B**,
-   **C**, **D**, or a custom compound name. Press **Integrate / update compound in
-   selected measurement** to save that measurement/compound assignment. Reusing
+   **C**, **D**, or a custom compound name. Press **Integrate compound in selected
+   measurement** to generate a baseline preview, adjust it, then press **Save /
+   update compound integral** to save the assignment. Reusing
    a name across measurements tracks the same compound; updating replaces that
    compound's previous integral in the selected measurement. Selecting a result
    row recalls its measurement, compound, limits and baseline for editing.
-3. The default baseline is **Horizontal midpoint**: a line parallel to the x-axis
-   whose height is `(signal_at_start + signal_at_end) / 2`. Drag either baseline
+3. The default **Endpoint line** baseline initially places its markers where the
+   selected limits intersect the UV chromatogram. It appears only when integration
+   is requested (or a saved integral is selected for editing). Drag either baseline
    endpoint vertically to choose custom heights (a sloping line is allowed), or
    horizontally to move its integration limit. The vertical interval handles are
    draggable as well. Press the integrate/update button to save the edited
@@ -267,15 +273,16 @@ normalization. Target names and colors remain editable in either workflow.
 Retention time alone is not proof of compound identity; review peaks for
 coelution and retention drift before assigning a name.
 
-**Endpoint line** and **Zero** baselines remain available. Collection integrals are **signed**
+**Horizontal midpoint** and **Zero** baselines remain available as explicit
+alternatives. Collection integrals are **signed**
 trapezoidal areas after baseline subtraction, in signal units × minutes. Negative
 areas are shown and flagged, not flipped positive. Area percentages are within
 each measurement's assigned channel/unit group and remain blank for failed or
 negative groups. Ratios divide target area by the chosen reference/internal
 standard area and remain blank for missing, non-positive or incompatible-unit
 denominators. These are detector-signal trends, not calibrated concentrations or
-chemical conversion. Single-measurement toolbar integrations also use the
-horizontal-midpoint default, but report absolute baseline-corrected area.
+chemical conversion. Single-measurement toolbar integrations use the same
+on-request endpoint-line default, but report absolute baseline-corrected area.
 
 **Save collection…** writes a standard compressed ZIP archive. **Open collection…**
 on the Integration toolbar reopens it independently of source locations or the
@@ -533,16 +540,21 @@ to delete a selected result row, or **Clear integrations** to remove the current
 measurement's records. The bottom **UV integrations** panel lists start/stop
 times, wavelength or channel name, absolute trapezoidal integral, and relative
 area. AIA percentages are computed separately for each recorded channel.
-While the panel is shown, saved intervals on the visible wavelength/channel have
-muted shading in the chromatogram. Selecting a table row makes its interval more
-prominent. Hiding the panel removes these overlays without deleting records.
+While the panel is shown, saved integrals on the visible wavelength/channel have
+brightened muted-blue fills between the baseline and the chromatogram, only
+where the trace is above its baseline. Selecting a row gives that area a stronger
+gold fill and restores its limits and baseline markers for editing. The fill
+updates with the edited geometry; **Update integral** replaces the saved record
+when you are ready. Hiding the panel removes the fills without deleting records.
 
-New integrations subtract a horizontal baseline at the mean signal value of the
-two interval endpoints. Drag the gold baseline points to adjust endpoint heights
-and limits; vertical region handles also adjust the limits. **Reset baseline**
-restores the horizontal-midpoint baseline for the current interval. Press
-**Integrate interval** to save the area with the chosen baseline and its endpoint
-heights. Existing saved integrations keep their recorded areas and metadata.
+Selecting an interval alone does not generate a baseline. Press **Integrate
+interval** to place gold markers on the UV trace at the interval's two limits.
+Drag the markers to adjust baseline heights and/or limits; vertical region
+handles also adjust the limits. **Reset baseline** puts the markers back on the
+trace endpoints. **Save integral** saves a new area and its baseline heights;
+**Cancel integration** hides the preview without saving. **New integral** starts
+a fresh preview instead of editing the selected record. Existing saved integrals
+retain their recorded values until explicitly updated.
 
 BlueLCMS does not modify mzML files. It saves records in a
 `.mzML.bluelcms-integrations.json` sidecar beside a writable source. For AFP or

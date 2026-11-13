@@ -4,13 +4,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QPointF, QSettings, Qt
 from PySide6.QtWidgets import QApplication
 
 from bluelcms import settings
 from bluelcms.app import MainWindow, cache_metadata
 from bluelcms.folders import cached_path
 from bluelcms.mzml import DADScan, Run, write_compact_cache
+from bluelcms.views import IntegrationAreaItem
 from test_aia import make_aia
 from test_aia_ui import settle
 
@@ -39,20 +40,22 @@ def test_saved_uv_windows_visibility_selection_redraw_and_wavelength(tmp_path, m
         window.show_integrations_action.trigger()
         items = window.uv.integration_highlights
         assert [item.getRegion() for item in items] == [(.25, .75), (1.25, 1.75)]
-        muted_alpha = items[0].brush.color().alpha()
-        assert all(not item.movable for item in items)
+        muted_alpha = items[0].brush().color().alpha()
+        assert muted_alpha >= 60
         assert all(item.acceptedMouseButtons() == Qt.MouseButton.NoButton for item in items)
         window.uv.region.setRegion((.1, 2.9))
         region, token = window.uv.region.getRegion(), window.region_token
         window.integration_table.selectRow(1)
         items = window.uv.integration_highlights
-        assert items[1].brush.color().alpha() > muted_alpha
+        assert items[1].brush().color().alpha() > muted_alpha
         assert items[1].zValue() > items[0].zValue()
-        assert window.uv.region.getRegion() == region
-        assert window.region_token == token
+        assert window.uv.region.getRegion() == (1.25, 1.75)
+        assert window.uv.baseline_editor.points[0].isVisible()
+        assert window.editing_integration_row == 1
+        assert window.integrate_action.text() == "Update integral"
         window.draw_uv()
         assert len(window.uv.integration_highlights) == 2
-        assert len([item for item in window.uv.plotItem.items if isinstance(item, pg.LinearRegionItem)]) == 3
+        assert len([item for item in window.uv.plotItem.items if isinstance(item, IntegrationAreaItem)]) == 2
         window.wavelength.setValue(280)
         assert [item.getRegion() for item in window.uv.integration_highlights] == [(2.25, 2.75)]
         window.mode.setCurrentText("DAD heatmap")
@@ -82,12 +85,13 @@ def test_aia_highlights_channel_filtering_add_remove_clear_and_deselect(tmp_path
             window.chromatogram_channel.setCurrentIndex(window.chromatogram_channel.findData(channel))
             window.uv.region.setRegion((.55, .75))
             window.integrate_action.trigger()
+            window.integrate_action.trigger()
         assert window.show_integrations_action.isChecked()
         assert len(window.uv.integration_highlights) == 1
         window.chromatogram_channel.setCurrentIndex(0)
         assert len(window.uv.integration_highlights) == 2
         window.integration_table.selectRow(1)
-        assert window.uv.integration_highlights[1].brush.color().alpha() > window.uv.integration_highlights[0].brush.color().alpha()
+        assert window.uv.integration_highlights[1].brush().color().alpha() > window.uv.integration_highlights[0].brush().color().alpha()
         window.chromatogram_channel.setCurrentIndex(window.chromatogram_channel.findData("DAD1B"))
         assert len(window.uv.integration_highlights) == 1
         assert window.uv.integration_highlights[0].zValue() == -10
@@ -101,8 +105,19 @@ def test_aia_highlights_channel_filtering_add_remove_clear_and_deselect(tmp_path
         window.chromatogram_channel.setCurrentIndex(window.chromatogram_channel.findData("DAD1B"))
         window.uv.region.setRegion((.55, .75))
         window.integrate_action.trigger()
+        window.integrate_action.trigger()
         assert len(window.uv.integration_highlights) == 1
         window.files.clearSelection()
         assert not window.uv.integration_highlights
     finally:
         window.close(); app.processEvents()
+
+
+def test_highlight_fills_only_positive_baseline_to_trace_area():
+    app = QApplication.instance() or QApplication([])
+    item = IntegrationAreaItem(np.array([0., 1., 2.]), np.array([0., 2., 0.]), np.array([1., 1., 1.]))
+    assert item.path().contains(QPointF(1., 1.5))
+    assert not item.path().contains(QPointF(1., .5))
+    assert not item.path().contains(QPointF(1., 2.5))
+    assert not item.path().contains(QPointF(.25, 1.1))
+    assert item.getRegion() == (0., 2.)

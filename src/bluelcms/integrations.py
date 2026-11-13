@@ -8,7 +8,7 @@ import tempfile
 import numpy as np
 
 
-def baseline_curve(times, signal, start, stop, method="midpoint", baseline_start=None, baseline_end=None):
+def baseline_curve(times, signal, start, stop, method="endpoints", baseline_start=None, baseline_end=None):
     """Interpolate limits and construct a horizontal, endpoint, zero or manual baseline."""
     times, signal = np.asarray(times, dtype=float), np.asarray(signal, dtype=float)
     if (times.ndim != 1 or signal.ndim != 1 or len(times) < 2 or len(times) != len(signal)

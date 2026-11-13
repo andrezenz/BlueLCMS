@@ -42,17 +42,37 @@ def test_integration_toolbar_aia_channel_interval_and_record_actions(tmp_path, m
         assert window.integrate_action.isEnabled()
         assert "DAD1B" in window.integration_selection_label.text()
         window.integrate_action.trigger()
+        assert not window.integrations
+        assert window.integrate_action.text() == "Save integral"
+        assert window.uv.baseline_editor.points[0].pos().y() == pytest.approx(-.5)
+        assert window.uv.baseline_editor.points[1].pos().y() == pytest.approx(2.5)
+        window.cancel_integration_action.trigger()
+        assert not window.integrations
+        assert all(not point.isVisible() for point in window.uv.baseline_editor.points)
+        window.integrate_action.trigger()
+        window.integrate_action.trigger()
         assert len(window.integrations) == 1
         assert window.integrations[0]["absolute_integral"] == pytest.approx(.225)
-        assert window.integrations[0]["baseline"] == "midpoint"
-        assert window.integrations[0]["baseline_start"] == pytest.approx(1)
-        assert window.integrations[0]["baseline_end"] == pytest.approx(1)
+        assert window.integrations[0]["baseline"] == "endpoints"
+        assert window.integrations[0]["baseline_start"] == pytest.approx(-.5)
+        assert window.integrations[0]["baseline_end"] == pytest.approx(2.5)
         assert window.integrations[0]["channel"] == "DAD1B"
         window.uv.region.setRegion((.5, .6))
+        window.integrate_action.trigger()
         window.integrate_action.trigger()
         assert len(window.integrations) == 2
         assert window.clear_integrations_action.isEnabled()
         window.integration_table.selectRow(0)
+        assert window.editing_integration_row == 0
+        assert window.integrate_action.text() == "Update integral"
+        editor = window.uv.baseline_editor
+        editor.points[0].setPos(.55, 0.)
+        editor.points[1].setPos(.75, 0.)
+        editor.finish_edit()
+        window.integrate_action.trigger()
+        assert len(window.integrations) == 2
+        assert window.integrations[0]["absolute_integral"] == pytest.approx(.425)
+        assert window.integrations[0]["baseline_start"] == 0.
         assert window.remove_integration_action.isEnabled()
         window.remove_integration_action.trigger()
         assert len(window.integrations) == 1
@@ -91,6 +111,7 @@ def test_toolbar_native_uv_wavelength_heatmap_and_selection_state(tmp_path, monk
         window.uv.region.setRegion((.5, 1.5))
         assert window.integrate_action.isEnabled()
         window.integrate_action.trigger()
+        window.integrate_action.trigger()
         assert window.integrations[0]["absolute_integral"] == pytest.approx(.5)
         assert window.integrations[0]["wavelength_nm"] == 254
         window.wavelength.setValue(280)
@@ -122,6 +143,8 @@ def test_baseline_points_and_limits_can_be_dragged_and_saved(tmp_path, monkeypat
         settle(window, app); window.files.setCurrentRow(0); settle(window, app)
         window.uv.region.setRegion((.5, 1.5))
         editor = window.uv.baseline_editor
+        assert all(not point.isVisible() for point in editor.points)
+        window.integrate_action.trigger()
         assert editor.points[0].pos().y() == 1
         assert editor.points[1].pos().y() == 1
         editor.points[0].setPos(.25, 1.25)
@@ -134,8 +157,10 @@ def test_baseline_points_and_limits_can_be_dragged_and_saved(tmp_path, monkeypat
         assert record["baseline_start"] == 1.25 and record["baseline_end"] == 1.75
         assert record["absolute_integral"] == pytest.approx(.375)
         window.reset_baseline_action.trigger()
+        window.new_integral_action.trigger()
         assert editor.points[0].pos().y() == pytest.approx(.5)
         window.uv.region.lines[0].setValue(.5)
-        assert editor.points[0].pos().y() == pytest.approx(.75)
+        assert editor.points[0].pos().y() == pytest.approx(1.)
+        assert editor.points[1].pos().y() == pytest.approx(.5)
     finally:
         window.close(); app.processEvents()

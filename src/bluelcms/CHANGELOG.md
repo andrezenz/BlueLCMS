@@ -1,3 +1,10 @@
+## 1.0.3.dev6
+
+- Generate integration baselines on explicit request, initially joining the UV trace at the two selected limits; save after adjusting markers or limits, or cancel the preview.
+- Selecting a saved UV integration restores its markers and limits for editing; Update integral replaces that record, while New integral starts a separate integration.
+- Brightened unselected integral highlights and filled only the area above the saved baseline up to the chromatogram, with stronger selected-integral coloring and live editing previews.
+- UV wheel zoom now preserves the current lower y-value instead of forcing zero. Dragging the y-axis pans vertically, and dragging the x-axis pans horizontally without changing the selected interval.
+
 ## 1.0.3.dev5
 
 - Highlight saved UV integrations with muted windows while Show integrations is enabled; selected rows receive a stronger highlight on the corresponding visible wavelength/channel.

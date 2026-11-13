@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDou
 
 from .reaction_collections import (COLORS, IndividualIntegration, ReactionTarget, evaluate,
                                    integration_curve, save_collection)
-from .views import BaselineEditor
+from .views import BaselineEditor, IntegrationAreaItem
 
 
 class ReactionCollectionDialog(QDialog):
@@ -29,6 +29,7 @@ class ReactionCollectionDialog(QDialog):
         self.progress_windows = set()
         self.pending_windows = {}
         self.pending_baselines = {}
+        self.baseline_requests = set()
         self.resize(1450, 950)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout = QVBoxLayout(self)
@@ -83,8 +84,9 @@ class ReactionCollectionDialog(QDialog):
         self.compound_name = QComboBox(); self.compound_name.setEditable(True)
         self.compound_name.addItems(list(dict.fromkeys(["A", "B", "C", "D", *[t.name for t in collection.targets]])))
         self.compound_name.activated.connect(self.choose_compound)
+        self.compound_name.editTextChanged.connect(self.compound_changed)
         self.individual_baseline = QComboBox()
-        for name, value in (("Horizontal midpoint", "midpoint"), ("Endpoint line", "endpoints"), ("Zero", "zero")):
+        for name, value in (("Endpoint line", "endpoints"), ("Horizontal midpoint", "midpoint"), ("Zero", "zero")):
             self.individual_baseline.addItem(name, value)
         self.individual_baseline.currentIndexChanged.connect(self.baseline_mode_changed)
         individual_layout.addWidget(self.individual_channel)
@@ -175,6 +177,14 @@ class ReactionCollectionDialog(QDialog):
 
     def render_targets(self):
         was_updating = self.updating; self.updating = True
+        # Qt retires replaced cell widgets with deferred deletion. Silence the
+        # old editors before replacing them so their teardown cannot re-enter
+        # collection recalculation after the table/dialog has changed.
+        for row in range(self.targets_table.rowCount()):
+            for column in range(1, self.targets_table.columnCount()):
+                widget = self.targets_table.cellWidget(row, column)
+                if widget is not None:
+                    widget.blockSignals(True)
         self.targets_table.setRowCount(len(self.collection.targets))
         channels = sorted({c.name for sample in self.collection.samples for c in sample.channels})
         for row, target in enumerate(self.collection.targets):
@@ -192,7 +202,7 @@ class ReactionCollectionDialog(QDialog):
                 field.valueChanged.connect(self.changed)
                 self.targets_table.setCellWidget(row, column, field)
             baseline = QComboBox()
-            baseline.addItem("Horizontal midpoint", "midpoint"); baseline.addItem("Endpoint line", "endpoints"); baseline.addItem("Zero", "zero")
+            baseline.addItem("Endpoint line", "endpoints"); baseline.addItem("Horizontal midpoint", "midpoint"); baseline.addItem("Zero", "zero")
             baseline.setCurrentIndex(baseline.findData(target.baseline)); baseline.currentIndexChanged.connect(self.changed)
             self.targets_table.setCellWidget(row, 4, baseline)
             color = QPushButton(target.color); color.setStyleSheet(f"color: {target.color};")
@@ -383,6 +393,13 @@ class ReactionCollectionDialog(QDialog):
                 self.selection_changed()
                 break
 
+    def compound_changed(self, *_):
+        if not self.updating:
+            sample = self.selected_sample()
+            if sample is not None:
+                self.baseline_requests.discard((sample.id, self.individual_channel.currentText()))
+            self.draw_plots()
+
     def baseline_mode_changed(self, *_):
         if not self.updating:
             sample = self.selected_sample()
@@ -402,12 +419,20 @@ class ReactionCollectionDialog(QDialog):
         if trace is None:
             return
         start, end = map(float, self.window_region.getRegion())
-        method, first, last = self.pending_baselines.get((sample.id, channel), ("midpoint", None, None))
+        key = (sample.id, channel)
+        if key not in self.baseline_requests:
+            self.baseline_requests.add(key)
+            self.pending_baselines[key] = (self.individual_baseline.currentData(), None, None)
+            self.draw_plots()
+            self.note.setText("Baseline markers are on the selected interval's trace endpoints. Adjust them, then save the compound integral.")
+            return
+        method, first, last = self.pending_baselines.get(key, ("endpoints", None, None))
         try:
             integration_curve(trace, start, end, method, first, last)
         except ValueError as error:
             self.note.setText(str(error)); return
         target = next((t for t in self.collection.targets if t.name == name), None)
+        updating_existing = target is not None and (sample.id, target.id) in self.collection.individual_integrations
         if target is None:
             index = 1
             while any(t.id == f"t{index:03d}" for t in self.collection.targets):
@@ -415,9 +440,12 @@ class ReactionCollectionDialog(QDialog):
             target = ReactionTarget(f"t{index:03d}", name, channel, start, end, color=COLORS[(index - 1) % len(COLORS)])
             self.collection.targets.append(target)
         self.collection.individual_integrations[(sample.id, target.id)] = IndividualIntegration(channel, start, end, method, first, last)
+        self.baseline_requests.discard(key)
         self.dirty = True; self.render_targets()
         self.targets_table.selectRow(self.collection.targets.index(target))
         self.recalculate()
+        if updating_existing and self.results_table.selectionModel().selectedRows():
+            self.select_integral()
 
     def select_integral(self):
         if self.updating or self.collection.integration_mode != "individual":
@@ -428,7 +456,17 @@ class ReactionCollectionDialog(QDialog):
         result = self.display_results[row]
         self.samples_table.selectRow(next(i for i, s in enumerate(self.collection.samples) if s.id == result["sample_id"]))
         self.targets_table.selectRow(next(i for i, t in enumerate(self.collection.targets) if t.id == result["target_id"]))
-        self.sync_individual_selection(); self.draw_plots()
+        sample = self.selected_sample()
+        spec = self.collection.individual_integrations[(result["sample_id"], result["target_id"])]
+        self.updating = True
+        self.individual_channel.setCurrentText(spec.channel)
+        self.compound_name.setCurrentText(result["target"])
+        self.updating = False
+        key = (sample.id, spec.channel)
+        self.pending_windows[key] = (spec.start_min, spec.end_min)
+        self.pending_baselines[key] = (spec.baseline, spec.baseline_start, spec.baseline_end)
+        self.baseline_requests.add(key)
+        self.draw_plots()
 
     def window_changed(self):
         if self.updating:
@@ -470,9 +508,12 @@ class ReactionCollectionDialog(QDialog):
         if sample is not None and target is not None:
             self.collection.overrides.pop((sample.id, target.id), None)
             self.collection.individual_integrations.pop((sample.id, target.id), None)
+            self.baseline_requests = {key for key in self.baseline_requests if key[0] != sample.id}
             self.dirty = True; self.recalculate()
 
     def baseline_edited(self, start, end, first, last):
+        if self.updating:
+            return
         sample, target = self.selected_sample(), self.selected_target()
         if sample is None:
             return
@@ -563,18 +604,22 @@ class ReactionCollectionDialog(QDialog):
             if sample_id != sample.id or spec.channel != channel:
                 continue
             compound = next(t for t in self.collection.targets if t.id == target_id)
-            color = QColor(compound.color); color.setAlpha(80 if target is not None and target.id == target_id else 30)
-            item = pg.LinearRegionItem((spec.start_min, spec.end_min), movable=False, brush=color, pen=None)
-            item.setZValue(-10); item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-            for line in item.lines:
-                line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            try:
+                x, y, base = integration_curve(trace, spec.start_min, spec.end_min, spec.baseline, spec.baseline_start, spec.baseline_end)
+            except ValueError:
+                continue
+            item = IntegrationAreaItem(x, y, base, selected=target is not None and target.id == target_id,
+                                       tooltip=compound.name, color=compound.color)
             self.overlay.addItem(item, ignoreBounds=True)
         default_window = (target.start_min, target.end_min) if target is not None and target.channel == channel else (float(trace.times[0]), float(trace.times[-1]))
         window = self.pending_windows.get((sample.id, channel), default_window)
         self.window_region.setRegion(window)
         self.overlay.addItem(self.window_region, ignoreBounds=True)
         method, first, last = self.pending_baselines.get((sample.id, channel), (self.individual_baseline.currentData(), None, None))
-        self.baseline_editor.set_trace(trace.times, trace.values, method, (first, last) if method == "manual" else None)
+        requested = (sample.id, channel) in self.baseline_requests
+        self.integrate_measurement_button.setText("Save / update compound integral" if requested else "Integrate compound in selected measurement")
+        if requested:
+            self.baseline_editor.set_trace(trace.times, trace.values, method, (first, last) if method == "manual" else None)
 
     def save(self):
         if not self.recalculate():
@@ -623,6 +668,17 @@ class ReactionCollectionDialog(QDialog):
                                           QMessageBox.StandardButton.Save)
             if choice == QMessageBox.StandardButton.Cancel or (choice == QMessageBox.StandardButton.Save and not self.save()):
                 event.ignore(); return
+        self.updating = True
+        self.samples_table.blockSignals(True)
+        self.targets_table.blockSignals(True)
+        self.results_table.blockSignals(True)
+        for row in range(self.targets_table.rowCount()):
+            for column in range(1, self.targets_table.columnCount()):
+                widget = self.targets_table.cellWidget(row, column)
+                if widget is not None:
+                    widget.blockSignals(True)
+        for window in list(self.progress_windows):
+            window.close()
         event.accept()
 
     def reject(self):
@@ -633,6 +689,7 @@ class ReactionProgressDialog(QDialog):
     """Independent progress plot with user-selected compound series."""
     def __init__(self, collection, results, parent=None):
         super().__init__(parent)
+        self.closing = False
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle(f"Reaction progress — {collection.name}")
         self.resize(950, 650)
@@ -665,7 +722,7 @@ class ReactionProgressDialog(QDialog):
         self.draw_plot()
 
     def draw_plot(self, *_):
-        if not hasattr(self, "plot"):
+        if self.closing or not hasattr(self, "plot"):
             return
         self.plot.clear()
         checked = {self.compounds.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.compounds.count())
@@ -679,3 +736,8 @@ class ReactionProgressDialog(QDialog):
                                [np.nan if r["area_percent"] is None else r["area_percent"] for r in rows],
                                pen=pg.mkPen(target.color, width=2), symbol="o", symbolBrush=target.color,
                                name=target.name, connect="finite")
+
+    def closeEvent(self, event):
+        self.closing = True
+        self.compounds.blockSignals(True)
+        event.accept()

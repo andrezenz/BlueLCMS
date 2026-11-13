@@ -357,6 +357,8 @@ class MainWindow(QMainWindow):
         self.integrations, self.integration_source = [], None
         self.integration_baseline_key = None
         self.integration_baseline_values = None
+        self.integration_baseline_requested = False
+        self.editing_integration_row = None
         self.reaction_windows = set()
         self.creating_reaction_collection = False
         self.discovered_measurements = {}
@@ -592,9 +594,13 @@ class MainWindow(QMainWindow):
         self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.integration_toolbar)
         self.integrate_action = self.integration_toolbar.addAction("Integrate interval")
-        self.integrate_action.triggered.connect(self.integrate_region)
+        self.integrate_action.triggered.connect(self.request_interval_integration)
+        self.new_integral_action = self.integration_toolbar.addAction("New integral")
+        self.new_integral_action.triggered.connect(self.new_interval_integration)
         self.reset_baseline_action = self.integration_toolbar.addAction("Reset baseline")
         self.reset_baseline_action.triggered.connect(self.reset_integration_baseline)
+        self.cancel_integration_action = self.integration_toolbar.addAction("Cancel integration")
+        self.cancel_integration_action.triggered.connect(self.cancel_interval_integration)
         self.show_integrations_action = self.integration_dock.toggleViewAction()
         self.show_integrations_action.setText("Show integrations")
         self.show_integrations_action.toggled.connect(self.update_integration_highlights)
@@ -615,6 +621,8 @@ class MainWindow(QMainWindow):
         self.integration_toolbar.addWidget(self.integration_selection_label)
         self.integration_table.itemSelectionChanged.connect(self.update_integration_actions)
         self.integration_table.itemSelectionChanged.connect(self.update_integration_highlights)
+        self.integration_table.itemSelectionChanged.connect(self.select_saved_integral)
+        self.integration_table.cellClicked.connect(lambda *_: self.select_saved_integral())
         self.deconvolution_button = QToolButton(self)
         self.deconvolution_button.setText("Deconvolute")
         self.deconvolution_button.setCheckable(True)
@@ -641,7 +649,7 @@ class MainWindow(QMainWindow):
         self.uv.region.sigRegionChanged.connect(lambda: self.timer.start())
         self.uv.region.sigRegionChanged.connect(self.invalidate_interval_deconvolution)
         self.uv.region.sigRegionChanged.connect(self.update_integration_actions)
-        self.uv.integrate_requested.connect(self.integrate_region)
+        self.uv.integrate_requested.connect(self.request_interval_integration)
         self.uv.baseline_editor.edited.connect(self.integration_baseline_edited)
         self.update_integration_actions()
         self.statusBar().showMessage("Choose a measurement folder from Settings.")
@@ -1840,6 +1848,9 @@ class MainWindow(QMainWindow):
         return paths[0] if len(paths) == 1 and paths[0] in self.runs else None
 
     def refresh_integrations(self):
+        self.integration_baseline_requested = False
+        self.integration_baseline_values = None
+        self.editing_integration_row = None
         source = self.selected_integration_source()
         self.integrations, self.integration_source = [], source
         if source is not None:
@@ -1902,6 +1913,7 @@ class MainWindow(QMainWindow):
         self.submit(0, load_collection, ready, Path(path))
 
     def refresh_integration_table(self):
+        blocked = self.integration_table.blockSignals(True)
         self.integration_table.setRowCount(len(self.integrations))
         self.integration_table.setHorizontalHeaderLabels(("Start (min)", "Stop (min)", "Channel / nm", "Absolute integral", "% of integrals"))
         for row, record in enumerate(self.integrations):
@@ -1923,8 +1935,44 @@ class MainWindow(QMainWindow):
                     item.setToolTip(f"Integrated channel {channel}; area in {record['unit']}·min")
                 self.integration_table.setItem(row, column, item)
         self.integration_table.resizeColumnsToContents()
+        self.integration_table.blockSignals(blocked)
         self.update_integration_actions()
         self.update_integration_highlights()
+
+    def select_saved_integral(self):
+        rows = self.integration_table.selectionModel().selectedRows()
+        if len(rows) != 1:
+            self.cancel_interval_integration()
+            return
+        row = rows[0].row()
+        source = self.selected_integration_source()
+        if source is None or source != self.integration_source or not 0 <= row < len(self.integrations):
+            return
+        record = self.integrations[row]
+        run = self.runs[source]
+        if record.get("channel") is not None:
+            channel = next((trace for trace in self.selected_chromatograms(run) if trace.name == record["channel"]), None)
+            if channel is None:
+                self.cancel_interval_integration(); return
+            times, values = channel.times, channel.values
+        else:
+            if record.get("wavelength_nm") != self.wavelength.value() or not run.dad:
+                self.cancel_interval_integration(); return
+            times, values, _ = run.uv_trace(self.wavelength.value())
+        method = record.get("baseline", "zero")
+        first, last = record.get("baseline_start"), record.get("baseline_end")
+        if first is not None and last is not None:
+            method = "manual"
+        try:
+            _, _, baseline = baseline_curve(times, values, record["start_min"], record["stop_min"], method, first, last)
+        except ValueError:
+            return
+        self.uv.region.setRegion((record["start_min"], record["stop_min"]))
+        self.uv.region.show()
+        self.integration_baseline_requested = True
+        self.editing_integration_row = row
+        self.integration_baseline_values = (float(baseline[0]), float(baseline[-1]))
+        self.update_integration_actions()
 
     def update_integration_highlights(self, *_):
         if self.closing:
@@ -1935,6 +1983,7 @@ class MainWindow(QMainWindow):
                 and source is not None and source == self.integration_source):
             run = self.runs[source]
             channels = {trace.name: trace for trace in self.selected_chromatograms(run)}
+            uv_times, uv_values, _ = run.uv_trace(self.wavelength.value())
             selected = {index.row() for index in self.integration_table.selectionModel().selectedRows()}
             for row, record in enumerate(self.integrations):
                 channel = record.get("channel")
@@ -1948,7 +1997,20 @@ class MainWindow(QMainWindow):
                         continue
                     label = f"UV {self.wavelength.value()} nm"
                 start, stop = record["start_min"], record["stop_min"]
-                windows.append((start, stop, row in selected,
+                times, values = (trace.times, trace.values) if channel is not None else (uv_times, uv_values)
+                method = record.get("baseline", "zero")
+                first, last = record.get("baseline_start"), record.get("baseline_end")
+                if first is not None and last is not None:
+                    method = "manual"
+                if row == self.editing_integration_row and self.integration_baseline_requested:
+                    start, stop = self.uv.region.getRegion()
+                    first, last = self.integration_baseline_values or (None, None)
+                    method = "manual" if self.integration_baseline_values is not None else "endpoints"
+                try:
+                    x, y, base = baseline_curve(times, values, start, stop, method, first, last)
+                except ValueError:
+                    continue
+                windows.append((x, y, base, row in selected,
                                 f"Integration {row + 1}: {label}, {start:.4f}–{stop:.4f} min"))
         self.uv.set_integration_highlights(windows)
 
@@ -1988,7 +2050,6 @@ class MainWindow(QMainWindow):
         self.integrate_action.setToolTip(description)
         self.integration_selection_label.setText(description)
         self.uv.integration_enabled = valid
-        self.reset_baseline_action.setEnabled(valid)
         if source is not None:
             run = self.runs[source]
             key = (source, id(run), self.chromatogram_channel.currentData() if run.chromatograms else self.wavelength.value())
@@ -1997,12 +2058,22 @@ class MainWindow(QMainWindow):
         if key != self.integration_baseline_key:
             self.integration_baseline_key = key
             self.integration_baseline_values = None
-        if valid:
+            self.integration_baseline_requested = False
+            self.editing_integration_row = None
+        if not valid:
+            self.integration_baseline_requested = False
+        preview = valid and self.integration_baseline_requested
+        self.uv.region.setBrush((72, 169, 239, 0 if preview and self.editing_integration_row is not None else 45))
+        self.integrate_action.setText(("Update integral" if self.editing_integration_row is not None else "Save integral") if preview else "Integrate interval")
+        self.new_integral_action.setEnabled(valid)
+        self.reset_baseline_action.setEnabled(preview)
+        self.cancel_integration_action.setEnabled(preview)
+        if preview:
             if run.chromatograms:
                 times, values = trace.times, trace.values
             else:
                 times, values, _ = run.uv_trace(self.wavelength.value())
-            self.uv.baseline_editor.set_trace(times, values, "manual" if self.integration_baseline_values is not None else "midpoint", self.integration_baseline_values)
+            self.uv.baseline_editor.set_trace(times, values, "manual" if self.integration_baseline_values is not None else "endpoints", self.integration_baseline_values)
         else:
             self.uv.baseline_editor.set_trace()
         has_records = self.integration_source is not None and bool(self.integrations)
@@ -2013,10 +2084,36 @@ class MainWindow(QMainWindow):
                             and all(path in self.runs and (self.runs[path].chromatograms or len(self.runs[path].dad) >= 2) for path in paths))
         self.create_collection_action.setEnabled(collection_ready)
         self.create_collection_action.setToolTip("Create an embedded chromatogram collection from at least two fully loaded measurements; reaction times are assigned in the editor.")
+        if self.editing_integration_row is not None:
+            self.update_integration_highlights()
 
     def reset_integration_baseline(self):
         self.integration_baseline_values = None
         self.update_integration_actions()
+
+    def request_interval_integration(self):
+        self.update_integration_actions()
+        if not self.integrate_action.isEnabled():
+            return
+        if self.integration_baseline_requested:
+            self.integrate_region()
+        else:
+            self.integration_baseline_requested = True
+            self.integration_baseline_values = None
+            self.update_integration_actions()
+            self.statusBar().showMessage("Adjust the baseline endpoints or interval limits, then choose Save integral.")
+
+    def cancel_interval_integration(self):
+        self.integration_baseline_requested = False
+        self.integration_baseline_values = None
+        self.editing_integration_row = None
+        self.update_integration_actions()
+        self.update_integration_highlights()
+
+    def new_interval_integration(self):
+        self.integration_table.clearSelection()
+        self.cancel_interval_integration()
+        self.request_interval_integration()
 
     def integration_baseline_edited(self, start, stop, first, last):
         self.integration_baseline_values = (first, last)
@@ -2042,7 +2139,7 @@ class MainWindow(QMainWindow):
         else:
             times, signal, _ = run.uv_trace(target)
         try:
-            method = "manual" if self.integration_baseline_values is not None else "midpoint"
+            method = "manual" if self.integration_baseline_values is not None else "endpoints"
             heights = self.integration_baseline_values or (None, None)
             integral = integrate_trace(times, signal, start, stop, method, *heights)
             _, _, baseline = baseline_curve(times, signal, start, stop, method, *heights)
@@ -2055,16 +2152,30 @@ class MainWindow(QMainWindow):
         record.update(baseline=method, baseline_start=float(baseline[0]), baseline_end=float(baseline[-1]))
         if channel is not None:
             record.update(channel=channel.name, unit=channel.unit, wavelength_nm=channel.wavelength_nm)
-        self.integrations.append(record)
+        row = self.editing_integration_row
+        previous = self.integrations[row] if row is not None and 0 <= row < len(self.integrations) else None
+        if previous is None:
+            self.integrations.append(record)
+        else:
+            self.integrations[row] = record
         try:
             save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source),
                               fingerprint=self.integration_fingerprint(source))
         except OSError as error:
-            self.integrations.pop()
+            if previous is None:
+                self.integrations.pop()
+            else:
+                self.integrations[row] = previous
             self.statusBar().showMessage(f"Could not save integration: {error}")
             return
+        self.integration_baseline_requested = False
+        self.integration_baseline_values = None
+        self.editing_integration_row = None
         self.refresh_integration_table()
         self.integration_dock.show()
+        if previous is not None:
+            self.integration_table.selectRow(row)
+            self.select_saved_integral()
         self.statusBar().showMessage(f"Integrated {min(start, stop):.4f}–{max(start, stop):.4f} min")
 
     def remove_integration(self):
@@ -2073,6 +2184,7 @@ class MainWindow(QMainWindow):
         if source is None or not selected:
             return
         del self.integrations[selected[0].row()]
+        self.cancel_interval_integration()
         save_integrations(integration_anchor(source), settings.integration_folder(), self.integrations, integration_beside_source(source),
                           fingerprint=self.integration_fingerprint(source))
         self.refresh_integration_table()
@@ -2081,6 +2193,7 @@ class MainWindow(QMainWindow):
         if self.integration_source is None or not self.integrations:
             return
         self.integrations.clear()
+        self.cancel_interval_integration()
         save_integrations(integration_anchor(self.integration_source), settings.integration_folder(), self.integrations, integration_beside_source(self.integration_source),
                           fingerprint=self.integration_fingerprint(self.integration_source))
         self.refresh_integration_table()
