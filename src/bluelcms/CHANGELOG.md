@@ -1,3 +1,9 @@
+## 1.0.3.dev7
+
+- Added Thermo-style spectrum and TIC CSV export discovery, preserving declared polarity, averaged retention interval, scan count, and original float64 mass/intensity values.
+- Pair spectrum exports with a unique same-folder TIC having matching raw-source metadata; show only the available mass pane when no chromatogram is associated.
+- Keep exported averages fixed when selecting TIC intervals, preserve high-resolution peaks independently of native display binning, and cache CSV/TIC data for offline use with source/companion freshness checks.
+
 ## 1.0.3.dev6
 
 - Generate integration baselines on explicit request, initially joining the UV trace at the two selected limits; save after adjusting markers or limits, or cancel the preview.

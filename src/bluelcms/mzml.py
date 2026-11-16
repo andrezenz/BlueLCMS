@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import gzip
+import json
 from pathlib import Path
 import re
 
@@ -34,12 +35,24 @@ class NamedTrace:
 
 @dataclass(frozen=True)
 class Chromatogram:
-    """A primary recorded LC channel, not an MS TIC or a wavelength spectrum."""
+    """A primary recorded detector trace or exported TIC, not a wavelength spectrum."""
     name: str
     times: np.ndarray
     values: np.ndarray
     unit: str = ""
     wavelength_nm: float | None = None
+
+
+@dataclass(frozen=True)
+class ExportedSpectrum:
+    """A fixed exported spectrum, not a synthetic time-resolved MS scan."""
+    polarity: str
+    mz: np.ndarray
+    intensity: np.ndarray
+    start_min: float | None = None
+    end_min: float | None = None
+    averaged_scans: int | None = None
+    scan_filter: str = ""
 
 
 @dataclass(frozen=True)
@@ -53,6 +66,7 @@ class Run:
     auxiliary: tuple[NamedTrace, ...] = ()
     chromatograms: tuple[Chromatogram, ...] = ()
     source_metadata: str = ""
+    exported_spectra: tuple[ExportedSpectrum, ...] = ()
 
     def tic_points(self):
         """(time, intensity, polarity) triples, preferring declared TIC values."""
@@ -125,6 +139,10 @@ def discover_files(folder: Path) -> list[Path]:
                 if any(p.is_file() and p.suffix.lower() == ".cdf" for p in path.iterdir()):
                     found.append(path)
         found.extend(parent / name for name in files if Path(name).suffix.lower() in {".mzml", ".gz", ".cdf"})
+        csv_files = [parent / name for name in files if Path(name).suffix.lower() == ".csv"]
+        if csv_files:
+            from .csv_exports import discover_csv_exports
+            found.extend(discover_csv_exports(csv_files))
     return sorted(found, key=order)
 
 
@@ -214,6 +232,9 @@ def load_run(path: Path, wavelength: float = 254.0, progress=None, dad_callback=
     if path.suffix.lower() in (".aia", ".cdf"):
         from .aia import load_aia
         return load_aia(path, progress)
+    if path.suffix.lower() == ".csv":
+        from .csv_exports import load_csv_export
+        return load_csv_export(path, progress)
     # Streaming avoids retaining the mzML XML tree; decoded MS1 arrays are cached
     # in the active Run for repeated time-region selection.
     if progress is None:
@@ -252,7 +273,7 @@ def _unpack_scans(data, prefix: str, times, constructor, extra=None):
 
 
 def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path:
-    """Persist only data BlueLCMS needs, using float32 arrays and zlib compression."""
+    """Persist analysis data with compression, retaining exported float64 precision."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.part")
     dad = _pack_scans(run.dad, "wavelength") if run.dad else {"shared": np.array(True), "axis": np.array([], dtype=np.float32), "intensity": np.empty((0, 0), dtype=np.float32)}
@@ -268,6 +289,9 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
         "chromatogram_names": np.asarray([trace.name for trace in run.chromatograms]),
         "chromatogram_units": np.asarray([trace.unit for trace in run.chromatograms]),
         "chromatogram_wavelengths": np.asarray([np.nan if trace.wavelength_nm is None else trace.wavelength_nm for trace in run.chromatograms]),
+        "exported_spectra_metadata": np.array(json.dumps([
+            {"polarity": s.polarity, "start_min": s.start_min, "end_min": s.end_min,
+             "averaged_scans": s.averaged_scans, "scan_filter": s.scan_filter} for s in run.exported_spectra])),
         "format": np.array(COMPACT_CACHE_FORMAT), "skipped_scans": np.array(run.skipped_scans),
         "preview_format": np.array(PREVIEW_FORMAT),
         **{f"preview_{size}": np.frombuffer(content, dtype=np.uint8) for size, content in previews.items()},
@@ -279,7 +303,10 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
         payload[f"auxiliary_values_{index}"] = trace.values
     for index, trace in enumerate(run.chromatograms):
         payload[f"chromatogram_times_{index}"] = trace.times
-        payload[f"chromatogram_values_{index}"] = trace.values.astype(np.float32, copy=False)
+        payload[f"chromatogram_values_{index}"] = trace.values
+    for index, spectrum in enumerate(run.exported_spectra):
+        payload[f"exported_mz_{index}"] = spectrum.mz
+        payload[f"exported_intensity_{index}"] = spectrum.intensity
     if not bool(dad["shared"]): payload["dad_offsets"] = dad["offsets"]
     if not bool(ms["shared"]): payload["ms_offsets"] = ms["offsets"]
     try:
@@ -290,9 +317,8 @@ def write_compact_cache(run: Run, path: Path, source_metadata: str = "") -> Path
         try:
             save_preview_files(path, previews)
             if source_metadata:
-                import json
                 metadata = json.loads(source_metadata)
-                if isinstance(metadata, dict) and not metadata.get("vendor") and metadata.get("source_type") != "aia" and metadata.get("path"):
+                if isinstance(metadata, dict) and not metadata.get("vendor") and metadata.get("source_type") not in ("aia", "thermo-csv") and metadata.get("path"):
                     write_desktop_thumbnail(Path(metadata["path"]), previews)
         except (ValueError, OSError):
             # The analysis cache remains valid even if the desktop thumbnail
@@ -327,11 +353,14 @@ def load_compact_cache(path: Path, dad_callback=None, scan_callback=None) -> Run
                                           None if np.isnan(data["chromatogram_wavelengths"][index]) else float(data["chromatogram_wavelengths"][index]))
                               for index, name in enumerate(data["chromatogram_names"])) if "chromatogram_names" in data else ()
         metadata = str(data["source_metadata"]) if "source_metadata" in data else ""
+        spectra_metadata = json.loads(str(data["exported_spectra_metadata"])) if "exported_spectra_metadata" in data else []
+        exported = tuple(ExportedSpectrum(mz=data[f"exported_mz_{index}"], intensity=data[f"exported_intensity_{index}"], **record)
+                         for index, record in enumerate(spectra_metadata))
     if dad_callback:
         for scan in dad: dad_callback(scan)
     if scan_callback:
         for scan in scans: scan_callback(scan)
-    return Run(dad, scans, skipped, tic, auxiliary, chromatograms, metadata)
+    return Run(dad, scans, skipped, tic, auxiliary, chromatograms, metadata, exported)
 
 
 
@@ -341,12 +370,23 @@ def mass_histograms(run: Run, start: float, end: float, bin_width: float = 0.1):
 
     Return only occupied bins to avoid allocating a huge dense histogram.
     Unknown polarity spectra are excluded by the reader, never guessed.
+    Fixed CSV exports retain their native masses and are independent of this
+    interval because they do not contain individual time-resolved scans.
     """
     if not np.isfinite(bin_width) or bin_width <= 0:
         raise ValueError("Bin width must be finite and positive")
     start, end = sorted((start, end))
     result = {}
     for polarity in ("+", "-"):
+        exported = [s for s in run.exported_spectra if s.polarity == polarity]
+        if exported:
+            # Exported averages do not contain individual scans. Keep original
+            # float64 masses and do not pretend a new interval re-extracts them.
+            mz = np.concatenate([s.mz for s in exported])
+            intensity = np.concatenate([s.intensity for s in exported])
+            axis, inverse = np.unique(mz, return_inverse=True)
+            result[polarity] = (axis, np.bincount(inverse, weights=intensity))
+            continue
         selected = [s for s in run.scans if s.polarity == polarity and start <= s.time <= end and len(s.mz)]
         if not selected:
             result[polarity] = (np.array([]), np.array([]))

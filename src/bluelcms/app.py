@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
 
 from . import settings
 from .aia import aia_fingerprint, is_aia, load_aia_cached
+from .csv_exports import csv_fingerprint, is_csv, load_csv_cached
 from .reaction_collections import create_collection, load_collection
 from .deconvolution import SPECIES_COLORS, deconvolute_histograms
 from .deconvolution_dialog import DeconvolutionDialog
@@ -56,7 +57,7 @@ def integration_anchor(source):
 
 def integration_beside_source(source):
     """Vendor folders are usually read-only shares, so never write beside them."""
-    return not isinstance(source, VendorMeasurement) and not is_aia(source) and source.is_file()
+    return not isinstance(source, VendorMeasurement) and not is_aia(source) and not is_csv(source) and source.is_file()
 
 
 def measurement_tooltip(measurement) -> str:
@@ -83,6 +84,8 @@ def cache_metadata(source):
                            "positive": str(source.advion_positive), "negative": str(source.advion_negative)})
     if is_aia(source):
         return json.dumps({"path": str(source), "source_type": "aia", "fingerprint": aia_fingerprint(source)})
+    if is_csv(source):
+        return json.dumps({"path": str(source), "source_type": "thermo-csv", "fingerprint": csv_fingerprint(source)})
     return json.dumps({"path": str(source)})
 
 
@@ -270,14 +273,14 @@ class LoadJob(PausableLoadJob):
             self.signals.done.emit(self.token, result, "")
 
 
-class AiaLoadJob(PausableLoadJob):
-    def __init__(self, token, path, cache):
-        super().__init__(token, load_aia_cached, path, cache)
+class CachedExportLoadJob(PausableLoadJob):
+    def __init__(self, token, path, cache, loader):
+        super().__init__(token, loader, path, cache)
 
     def run(self):
         try:
             self.checkpoint()
-            result = load_aia_cached(*self.args, progress=self.report_progress)
+            result = self.function(*self.args, progress=self.report_progress)
         except Exception as error:
             self.signals.done.emit(self.token, None, str(error))
         else:
@@ -781,12 +784,14 @@ class MainWindow(QMainWindow):
         for polarity, plot in (("+", self.positive), ("-", self.negative)):
             # Use whole-measurement scan availability, not interval histograms:
             # selecting a quiet interval should not collapse the plot layout.
-            available = any(any(scan.polarity == polarity and len(scan.mz) and len(scan.intensity)
-                                for scan in run.scans) for run in self.runs.values())
+            available = any(any(scan.polarity == polarity and len(scan.mz) and len(scan.intensity) for scan in run.scans)
+                            or any(s.polarity == polarity and len(s.mz) for s in run.exported_spectra) for run in self.runs.values())
             visible = bool(available and settings.show_mass_spectrum(polarity))
             plot.setVisible(visible)
             visible_panes.append(visible)
         self.mass_splitter.setVisible(any(visible_panes))
+        has_chromatogram = any(run.dad or run.chromatograms or run.tic or run.scans or run.auxiliary for run in self.runs.values())
+        self.uv.setVisible(not self.runs or bool(has_chromatogram))
 
     def submit(self, token, function, callback, *args):
         job = Job(token, function, *args); self.jobs.add(job)
@@ -812,7 +817,7 @@ class MainWindow(QMainWindow):
         self.chromatogram_channel.setVisible(bool(names))
         self.chromatogram_channel_label.setVisible(bool(names))
         self.chromatogram_legend.setVisible(bool(names))
-        recorded_only = bool(self.runs) and all(run.chromatograms and not run.dad for run in self.runs.values())
+        recorded_only = bool(self.runs) and all((run.chromatograms or run.exported_spectra) and not run.dad for run in self.runs.values())
         self.wavelength.setEnabled(not recorded_only)
         self.mode.setEnabled(not recorded_only)
         if recorded_only:
@@ -1370,6 +1375,8 @@ class MainWindow(QMainWindow):
         return legacy_cached_path(source, settings.cache_folder())
 
     def load_source_label(self, path, source):
+        if is_csv(path) and source == path:
+            return "original CSV spectrum/chromatogram export"
         if is_aia(path) and source == path:
             return "original remote AIA chromatograms" if is_afp_path(path) else "original local AIA chromatograms"
         if self.cached_measurements.get(path) == source:
@@ -1728,10 +1735,10 @@ class MainWindow(QMainWindow):
         self.set_loading(True)
         self.progress.setRange(0, 0); self.progress.setFormat(f"Loading {self.queue_marker()}…"); self.progress.show()
         cache = self.cache_for(path)
-        if is_aia(path):
-            job = AiaLoadJob(token, path, cache)
+        if is_aia(path) or is_csv(path):
+            job = CachedExportLoadJob(token, path, cache, load_csv_cached if is_csv(path) else load_aia_cached)
             self.jobs.add(job); self.load_jobs[path] = job
-            job.signals.progress.connect(lambda t, done, total, p=path: self.load_progress(t, p, "AIA chromatograms", done, total))
+            job.signals.progress.connect(lambda t, done, total, p=path: self.load_progress(t, p, "CSV export" if is_csv(p) else "AIA chromatograms", done, total))
             def ready(t, result, error, p=path):
                 self.loaded(t, p, None if error else result.run, error,
                             refresh_cache=False if error else result.refresh_cache)
@@ -1864,7 +1871,7 @@ class MainWindow(QMainWindow):
         run = self.runs.get(source)
         if run is not None and run.source_metadata:
             metadata = json.loads(run.source_metadata)
-            if metadata.get("source_type") == "aia":
+            if metadata.get("source_type") in ("aia", "thermo-csv"):
                 return metadata.get("fingerprint")
         return None
 
@@ -2270,7 +2277,7 @@ class MainWindow(QMainWindow):
         self.uv.view.heatmap_mode = False
         self.uv.heatmap_zoom_preview.hide()
         self.uv.tic_view.show()
-        if settings.uv_spectrum_at_cursor():
+        if settings.uv_spectrum_at_cursor() and not self.uv.isHidden():
             self.uv_spectrum_dock.show()
         else:
             self.uv_spectrum_dock.hide()
@@ -2378,8 +2385,17 @@ class MainWindow(QMainWindow):
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
         if self.active_load is not None and self.active_load in selected:
             return
-        if not self.runs or not self.uv.region.isVisible(): return
-        self.region_token += 1; self.set_loading(True); start, end = self.uv.region.getRegion(); pending = len(self.runs); collected = {}
+        if not self.runs:
+            return
+        exported = [s for run in self.runs.values() for s in run.exported_spectra]
+        if self.uv.region.isVisible():
+            start, end = self.uv.region.getRegion()
+        elif exported:
+            start = min((s.start_min for s in exported if s.start_min is not None), default=0.)
+            end = max((s.end_min for s in exported if s.end_min is not None), default=start)
+        else:
+            return
+        self.region_token += 1; self.set_loading(True); pending = len(self.runs); collected = {}
         def done(token, result, error, path):
             nonlocal pending
             if token != self.region_token: return
@@ -2389,7 +2405,7 @@ class MainWindow(QMainWindow):
                 self.histograms = collected; self.set_loading(False); self.draw_histograms()
                 self.request_deconvolution()
                 start, end = self.uv.region.getRegion()
-                self.statusBar().showMessage(f"{start:.3f}–{end:.3f} min | MS1 intensity sums | {self.display_bin_width:g} Th display bins")
+                self.statusBar().showMessage("Fixed CSV spectrum export: TIC interval selection does not re-extract individual scans." if exported else f"{start:.3f}–{end:.3f} min | MS1 intensity sums | {self.display_bin_width:g} Th display bins")
         for path, run in self.runs.items(): self.submit(self.region_token, mass_histograms, lambda t, r, e, p=path: done(t, r, e, p), run, start, end, NATIVE_BIN_WIDTH)
 
     def schedule_histogram_draw(self):
@@ -2408,6 +2424,14 @@ class MainWindow(QMainWindow):
     def _draw_histograms(self):
         for polarity, plot, title in (("+", self.positive, "Positive ions"), ("-", self.negative, "Negative ions")):
             plot.clear(); plot.data = []; plot.setTitle(title)
+            exported = [s for run in self.runs.values() for s in run.exported_spectra if s.polarity == polarity]
+            if exported:
+                descriptions = [(f"{s.start_min:.2f}–{s.end_min:.2f} min" if s.start_min is not None else "RT not specified")
+                                + (f", AV {s.averaged_scans}" if s.averaged_scans is not None else "") for s in exported]
+                plot.setTitle(title + " — fixed CSV export: " + "; ".join(descriptions))
+                plot.setLabel("left", "Exported intensity")
+            else:
+                plot.setLabel("left", "Summed intensity")
             plot.snap_data = [result[polarity] for result in self.histograms.values()]
             low, high = plot.getViewBox().viewRange()[0]; pixels = max(1, int(plot.getViewBox().width()))
             full_x = [result[polarity][0] for result in self.histograms.values() if len(result[polarity][0])]
@@ -2421,7 +2445,8 @@ class MainWindow(QMainWindow):
             visible_species = self.visible_deconvolution_species(polarity)
             for index, (path, result) in enumerate(self.histograms.items()):
                 source_x, source_y = result[polarity]
-                x, y = rebin_histogram(source_x, source_y, bin_width)
+                native_export = path in self.runs and bool(self.runs[path].exported_spectra)
+                x, y = (source_x, source_y) if native_export else rebin_histogram(source_x, source_y, bin_width)
                 if len(x):
                     plot.data.append((x, y))
                 groups = []
@@ -2445,7 +2470,7 @@ class MainWindow(QMainWindow):
                 else:
                     groups = [(np.ones(len(source_x), dtype=bool), COLORS[index % len(COLORS)])]
                 for mask, brush in groups:
-                    gx, gy = rebin_histogram(source_x[mask], source_y[mask], bin_width)
+                    gx, gy = (source_x[mask], source_y[mask]) if native_export else rebin_histogram(source_x[mask], source_y[mask], bin_width)
                     bx, by, width = pixel_buckets(gx, gy, low, high, pixels)
                     if len(bx):
                         base = np.asarray([stacked.get(value, 0) for value in bx])
@@ -2480,7 +2505,8 @@ class MainWindow(QMainWindow):
                 if len(used) == 5:
                     break
                 if all(abs(x - previous) > (high - low) / 12 for previous in used):
-                    label = pg.TextItem(f"{x:.2f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
+                    precision = 5 if any(run.exported_spectra for run in self.runs.values()) else 2
+                    label = pg.TextItem(f"{x:.{precision}f}", color="#e8e8e8", anchor=(.5, 1)); label.setPos(x, value); plot.addItem(label); used.append(x)
 
     def closeEvent(self, event):
         for dialog in list(self.reaction_windows):

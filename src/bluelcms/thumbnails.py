@@ -27,6 +27,9 @@ def nearest_uv_trace(run, target=254.0):
 
 
 def preview_series(run):
+    if run.exported_spectra and not run.chromatograms:
+        spectrum = run.exported_spectra[0]
+        return [("uv", f"MS spectrum ({spectrum.polarity})", spectrum.mz, spectrum.intensity)]
     if run.chromatograms:
         trace = run.chromatograms[0]
         # AIA previews use the first recorded channel, without inventing nm.

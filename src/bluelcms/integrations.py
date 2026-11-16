@@ -50,6 +50,9 @@ def integrate_trace(times, signal, start: float, stop: float, baseline="zero", b
 
 
 def source_fingerprint(source: Path) -> dict:
+    if source.suffix.lower() == ".csv" and source.is_file():
+        from .csv_exports import csv_fingerprint
+        return csv_fingerprint(source)
     if (source.suffix.lower() == ".aia" and source.is_dir()) or (source.suffix.lower() == ".cdf" and source.is_file()):
         from .aia import aia_fingerprint
         return aia_fingerprint(source)

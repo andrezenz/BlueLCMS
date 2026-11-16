@@ -75,6 +75,20 @@ focuses the corresponding mass panel. Both panels remain available.
 
 ## Source checkout
 
+Thermo text/CSV spectrum exports can also be opened directly:
+
+```bash
+BlueLCMS --open "/path/to/sample_spectrum.csv"
+```
+
+A unique same-directory `*_TIC.csv` export with matching raw-source metadata is
+associated automatically. A standalone spectrum without a chromatogram shows
+only its mass-spectrum pane. These are **fixed exported spectra**, including any
+declared averaged RT interval; interval selection does not re-extract scans.
+`--time` requires actual individual scans and is unavailable for a fixed CSV
+export. Only the supported `SPECTRUM - MS`/`CHROMATOGRAM` preamble format is read;
+arbitrary numeric CSVs are not interpreted as MS data.
+
 From the project directory on Linux/macOS:
 
 ```bash
@@ -112,7 +126,8 @@ For a source checkout, put the Python executable and the absolute path to
 ## Options and caching
 
 - `--open PATH`: required for an opening request; supports mzML,
-  gzip-compressed mzML, AIA directories, CDF chromatograms, and BlueLCMS NPZ cache files.
+  gzip-compressed mzML, AIA directories, CDF chromatograms, Thermo spectrum/TIC
+  CSV exports, and BlueLCMS NPZ cache files.
 - `--start MIN --end MIN`: select an interval; supply both, with end >= start.
 - `--time MIN`: select the nearest individual MS scan instead of an interval.
 - `--polarity positive|negative`: focus a panel and restrict nearest-scan lookup.

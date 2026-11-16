@@ -167,7 +167,8 @@ and are cached without being added to the selected plots.
    locations are remembered between sessions. All subfolders are searched and
    measurements appear under expandable source/folder nodes in the sidebar;
    `.mzML`, gzip-compressed `.gz` mzML files, Agilent `.AIA` export directories,
-   and standalone `.cdf` chromatograms are supported. Cached-only
+   standalone `.cdf` chromatograms, and Thermo spectrum/TIC `.csv` exports are
+   supported. Cached-only
    measurements retain their original folder hierarchy. Folder nodes can be
    expanded or collapsed; measurements in each folder sort newest-date-first,
    with undated entries after dated ones. Select measurement leaves to view data.
@@ -228,6 +229,43 @@ re-exports, added channels and removed channels. Use **Refresh file list** to
 reload an already selected export after it changes. Source files are read-only.
 External programs can use `--open "/path/to/sample.AIA"` or a `.cdf` path, with
 optional `--start`/`--end` times in minutes; see the bundled external-command help.
+
+### Thermo HR-MS spectrum and TIC CSV exports
+
+Add the mounted parent directory under **Settings → Manage measurement
+locations…**. BlueLCMS recognizes exports beginning with **SPECTRUM - MS** and
+**CHROMATOGRAM**, including their metadata preambles and `Mass,Intensity` or
+`Time(min),Relative Abundance` data headers. Other CSVs are ignored by discovery.
+Files can also be opened with `--open "/path/to/export.csv"`.
+
+For a spectrum export, the loader looks for a unique same-folder `*_TIC.csv`
+whose raw-source path in the preamble matches. The pair appears once in the
+sidebar, under the spectrum filename. No pairing is guessed when raw-source
+identities differ or multiple TIC candidates match. Standalone chromatogram
+exports are displayable without a mass spectrum.
+
+The provided `anz217f6-10` example contains **5,400 positive-ion mass/intensity
+points**, exported from **2.10–2.60 min** with **AV 64**, and a separate **718-point
+TIC**. With both files available, the TIC is shown above the positive mass plot.
+Without an associated chromatogram, the upper plot is automatically hidden and
+only the available mass-spectrum pane is shown. Raw-file paths in the headers
+are provenance; the original Windows `.raw` file does not need to be accessible.
+
+CSV spectra are **fixed exported averages**, not synthetic individual scans.
+Selecting another TIC interval does not create a new spectrum or re-extract the
+original RAW data; the mass-plot title and status identify the fixed export and
+its declared RT/averaging metadata. Individual-scan XIC extraction is unavailable
+for these files. TIC values retain their exported scale; the column name
+“Relative Abundance” is not interpreted as an instruction to normalize to 100%.
+
+Masses and intensities are kept as float64 through loading and compact caching.
+CSV spectra bypass the native MS histogram grid: zoomed bars aggregate only at
+screen-pixel resolution, with original masses retained for labels and snapping.
+This preserves close high-resolution peaks; it does not turn the existing
+charge-envelope matcher into an isotope-resolved HR deconvolution algorithm.
+The same local `.bluelcms.npz` cache and expiry settings apply, including offline
+reopening and freshness checks when source data or the TIC association changes.
+Original CSV files are read-only; integration sidecars are stored locally.
 
 ### Reaction-monitoring collections
 
