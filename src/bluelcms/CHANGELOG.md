@@ -1,3 +1,9 @@
+## 1.0.3.dev8
+
+- Label imported TIC exports explicitly as total ion signal versus retention time and mark the fixed spectrum's exported time interval with a non-editable band and scan-count label.
+- Display paired spectrum/TIC exports as one named measurement with both source files in its tooltip, including offline caches and previously cached standalone TICs.
+- Preserve the fixed exported interval when users move their working selection or toggle integration overlays; reopening a paired TIC selects its spectrum measurement.
+
 ## 1.0.3.dev7
 
 - Added Thermo-style spectrum and TIC CSV export discovery, preserving declared polarity, averaged retention interval, scan count, and original float64 mass/intensity values.

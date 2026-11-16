@@ -286,6 +286,9 @@ class UVPlot(pg.PlotWidget):
         self.trace = self.plot(pen=pg.mkPen("#48a9ef", width=2))
         self.region = pg.LinearRegionItem(brush=(72, 169, 239, 45), movable=False)
         self.integration_highlights = []
+        self.exported_interval_highlights = []
+        self.exported_interval_labels = []
+        self.view.sigRangeChanged.connect(self.position_exported_interval_labels)
         self.integration_enabled = False
         for line in self.region.lines:
             line.setMovable(True)
@@ -298,6 +301,8 @@ class UVPlot(pg.PlotWidget):
     def clear_uv(self):
         self.plotItem.clear()
         self.integration_highlights = []
+        self.exported_interval_highlights = []
+        self.exported_interval_labels = []
         self.addItem(self.heatmap_zoom_preview, ignoreBounds=True)
         if hasattr(self, "heatmap_cursor"):
             self.addItem(self.heatmap_cursor, ignoreBounds=True)
@@ -311,6 +316,38 @@ class UVPlot(pg.PlotWidget):
             item = IntegrationAreaItem(times, signal, baseline, selected, tooltip)
             self.addItem(item, ignoreBounds=True)
             self.integration_highlights.append(item)
+
+    def set_exported_intervals(self, intervals):
+        """Fixed acquisition provenance, separate from editable integration ROIs."""
+        for item in self.exported_interval_highlights + self.exported_interval_labels:
+            self.removeItem(item)
+        self.exported_interval_highlights = []
+        self.exported_interval_labels = []
+        for start, stop, text in intervals:
+            item = pg.LinearRegionItem((start, stop), movable=False,
+                                       brush=(243, 174, 87, 65), hoverBrush=(243, 174, 87, 65),
+                                       pen=pg.mkPen("#f3ae57", width=1.5, style=Qt.PenStyle.DashLine))
+            item.setZValue(-5)
+            item.setToolTip(text)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            item.setAcceptHoverEvents(False)
+            for line in item.lines:
+                line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                line.setAcceptHoverEvents(False)
+            label = pg.TextItem(text, color="#f3ae57", anchor=(.5, 0), fill=(16, 33, 45, 190))
+            label.setZValue(18)
+            label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.addItem(item, ignoreBounds=True)
+            self.addItem(label, ignoreBounds=True)
+            self.exported_interval_highlights.append(item)
+            self.exported_interval_labels.append(label)
+        self.position_exported_interval_labels()
+
+    def position_exported_interval_labels(self, *_):
+        low, high = self.view.viewRange()[1]
+        for index, (item, label) in enumerate(zip(self.exported_interval_highlights, self.exported_interval_labels)):
+            start, stop = item.getRegion()
+            label.setPos((start + stop) / 2, high - (high - low) * .06 * index)
 
     def move_heatmap_cursor(self, position):
         if not self.getViewBox().sceneBoundingRect().contains(position):

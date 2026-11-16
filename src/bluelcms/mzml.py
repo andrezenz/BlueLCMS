@@ -117,6 +117,13 @@ def file_display_name(path: Path, show_date_prefix: bool) -> str:
     return path.name if show_date_prefix else DATE_PREFIX.sub("", path.name)
 
 
+class DiscoveredFiles(list):
+    """Paths plus lightweight CSV metadata collected off the GUI thread."""
+    def __init__(self, paths=(), csv_metadata=None):
+        super().__init__(paths)
+        self.csv_metadata = csv_metadata or {}
+
+
 def discover_files(folder: Path) -> list[Path]:
     """Find measurements, treating each AIA directory as one indivisible run."""
     import os
@@ -128,6 +135,7 @@ def discover_files(folder: Path) -> list[Path]:
         match = DATE_PREFIX.match(path.name)
         return (0, -int(match.group(1).replace("_", "")), path.name.casefold()) if match else (1, 0, path.name.casefold())
     found = []
+    csv_metadata = {}
     def failed(error):
         raise error
     for directory, subdirs, files in os.walk(folder, onerror=failed):
@@ -142,8 +150,10 @@ def discover_files(folder: Path) -> list[Path]:
         csv_files = [parent / name for name in files if Path(name).suffix.lower() == ".csv"]
         if csv_files:
             from .csv_exports import discover_csv_exports
-            found.extend(discover_csv_exports(csv_files))
-    return sorted(found, key=order)
+            exports = discover_csv_exports(csv_files)
+            found.extend(exports)
+            csv_metadata.update(exports.csv_metadata)
+    return DiscoveredFiles(sorted(found, key=order), csv_metadata)
 
 
 def retention_time(spectrum: dict) -> float | None:

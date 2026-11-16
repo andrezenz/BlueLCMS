@@ -240,13 +240,23 @@ Files can also be opened with `--open "/path/to/export.csv"`.
 
 For a spectrum export, the loader looks for a unique same-folder `*_TIC.csv`
 whose raw-source path in the preamble matches. The pair appears once in the
-sidebar, under the spectrum filename. No pairing is guessed when raw-source
+sidebar, named from the raw measurement, polarity and exported time interval
+(for example **anz217f6-10 — HR-ESI (+), 2.10–2.60 min**). Both file paths are
+listed in the tooltip. Previously cached standalone TICs are represented by the
+paired measurement instead of appearing again, including offline reopening.
+No pairing is guessed when raw-source
 identities differ or multiple TIC candidates match. Standalone chromatogram
 exports are displayable without a mass spectrum.
 
 The provided `anz217f6-10` example contains **5,400 positive-ion mass/intensity
 points**, exported from **2.10–2.60 min** with **AV 64**, and a separate **718-point
-TIC**. With both files available, the TIC is shown above the positive mass plot.
+TIC**. With both files available, the TIC is shown above the positive mass plot,
+explicitly labeled **Total ion chromatogram (TIC) versus time**, with retention
+time in minutes and total ion signal on the axes. A fixed amber band marks
+**2.10–2.60 min**, labeled **64 scans**. This exported interval is non-editable,
+remains separate from the user's working interval and integration-area fills,
+and is restored from the local cache. Moving the working interval or hiding
+integration overlays does not move or hide the exported-interval band.
 Without an associated chromatogram, the upper plot is automatically hidden and
 only the available mass-spectrum pane is shown. Raw-file paths in the headers
 are provenance; the original Windows `.raw` file does not need to be accessible.

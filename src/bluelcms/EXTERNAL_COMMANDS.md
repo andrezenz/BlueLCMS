@@ -82,7 +82,10 @@ BlueLCMS --open "/path/to/sample_spectrum.csv"
 ```
 
 A unique same-directory `*_TIC.csv` export with matching raw-source metadata is
-associated automatically. A standalone spectrum without a chromatogram shows
+associated automatically and shown as one selectable measurement. Opening its
+TIC selects that paired measurement when it is already discovered or cached.
+The TIC plot marks the fixed spectrum's exported interval independently of
+editable time selections. A standalone spectrum without a chromatogram shows
 only its mass-spectrum pane. These are **fixed exported spectra**, including any
 declared averaged RT interval; interval selection does not re-extract scans.
 `--time` requires actual individual scans and is unavailable for a fixed CSV

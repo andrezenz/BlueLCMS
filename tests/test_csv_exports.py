@@ -47,6 +47,7 @@ def test_matching_tic_is_grouped_and_unrelated_csvs_ignored(tmp_path):
     tic = write_tic(tmp_path / "sample_TIC.csv")
     (tmp_path / "report.csv").write_text("time,value\n0,1\n")
     assert discover_files(tmp_path) == [spectrum]
+    assert discover_files(tmp_path).csv_metadata[spectrum]["paired_tic"] == str(tic)
     run = load_csv_export(spectrum)
     assert len(run.chromatograms) == 1 and run.chromatograms[0].name == "TIC"
     assert len(run.exported_spectra) == 1

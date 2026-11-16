@@ -10,7 +10,7 @@ from zipfile import BadZipFile
 
 import numpy as np
 
-from .mzml import Chromatogram, ExportedSpectrum, Run, load_compact_cache
+from .mzml import Chromatogram, DiscoveredFiles, ExportedSpectrum, Run, load_compact_cache
 
 
 def is_csv(path):
@@ -27,11 +27,22 @@ def _decode(content):
 def export_header(path):
     with path.open("rb") as source:
         lines = _decode(source.read(4096)).splitlines()
+    return preamble_info("\n".join(lines))
+
+
+def preamble_info(text):
+    lines = text.splitlines()
     if len(lines) < 2 or lines[0].strip().upper() not in ("SPECTRUM - MS", "CHROMATOGRAM"):
         return None
+    polarity = re.search(r"\b(?:FTMS|ITMS|TOFMS|MS)\s+([+-])\s", text, re.IGNORECASE)
+    rt = re.search(r"\bRT:\s*(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?", text, re.IGNORECASE)
+    averages = re.search(r"\bAV:\s*(\d+)", text, re.IGNORECASE)
     return {"kind": lines[0].strip().upper(), "raw_source": lines[1].strip(),
             "identity": ntpath.normcase(ntpath.normpath(lines[1].strip())),
-            "tic": lines[0].strip().upper() == "CHROMATOGRAM" and path.stem.casefold().endswith("_tic")}
+            "polarity": polarity[1] if polarity else None,
+            "start_min": float(rt[1]) if rt else None, "end_min": float(rt[2] or rt[1]) if rt else None,
+            "averaged_scans": int(averages[1]) if averages else None,
+            "hr_esi": bool(re.search(r"\bFTMS\b.*\bESI\b", text, re.IGNORECASE))}
 
 
 def _headers(files):
@@ -44,6 +55,7 @@ def _headers(files):
         except (OSError, UnicodeError):
             continue
         if header is not None:
+            header["tic"] = header["kind"] == "CHROMATOGRAM" and file.stem.casefold().endswith("_tic")
             headers[file] = header
     return headers
 
@@ -58,17 +70,63 @@ def discover_csv_exports(files):
     """Ignore unrelated CSVs and list a paired spectrum/TIC only once."""
     headers = _headers(files)
     paired = set()
+    metadata = {}
     for path, header in headers.items():
         matches = _matching_tics(path, header, headers)
+        metadata[path] = dict(header, paired_tic=str(matches[0]) if len(matches) == 1 else None)
         if len(matches) == 1:
             paired.add(matches[0])
-    return [path for path in headers if path not in paired]
+    return DiscoveredFiles([path for path in headers if path not in paired], metadata)
+
+
+def cached_csv_info(metadata, spectra=()):
+    """Reconstruct labels and grouping without opening the original export."""
+    info = preamble_info(metadata.get("preamble", "")) or {}
+    info.update({key: metadata[key] for key in ("raw_source", "paired_tic") if key in metadata})
+    if spectra:
+        info.setdefault("kind", "SPECTRUM - MS")
+        for key in ("polarity", "start_min", "end_min", "averaged_scans"):
+            info.setdefault(key, spectra[0].get(key))
+    return info
+
+
+def csv_display_name(path, info):
+    raw = info.get("raw_source", "")
+    name = ntpath.splitext(ntpath.basename(raw))[0] if raw else path.stem
+    if info.get("kind") == "SPECTRUM - MS":
+        name += " — " + ("HR-ESI" if info.get("hr_esi") else "MS")
+        if info.get("polarity"):
+            name += f" ({info['polarity']})"
+        if info.get("start_min") is not None and info.get("end_min") is not None:
+            name += f", {info['start_min']:.2f}–{info['end_min']:.2f} min"
+    elif info.get("kind") == "CHROMATOGRAM":
+        name += " — TIC" if path.stem.casefold().endswith("_tic") else " — chromatogram"
+    return name
+
+
+def csv_companion_aliases(paths, metadata):
+    """Suppress cached standalone companions only when a spectrum represents them."""
+    aliases = {}
+    for source in paths:
+        info = metadata.get(source, {})
+        companion = info.get("paired_tic")
+        if info.get("kind") != "SPECTRUM - MS" or not companion:
+            continue
+        companion = Path(companion)
+        if companion not in paths:
+            continue
+        other_raw = metadata.get(companion, {}).get("raw_source")
+        if other_raw and ntpath.normcase(ntpath.normpath(other_raw)) != ntpath.normcase(ntpath.normpath(info.get("raw_source", ""))):
+            continue
+        aliases.setdefault(companion, source)
+    return aliases
 
 
 def describe_export(path):
     header = export_header(path)
     if header is None:
         raise ValueError("Unsupported CSV: expected a Thermo SPECTRUM - MS or CHROMATOGRAM preamble")
+    header["tic"] = header["kind"] == "CHROMATOGRAM" and path.stem.casefold().endswith("_tic")
     headers = _headers(p for p in path.parent.iterdir() if p.is_file() and is_csv(p))
     matches = _matching_tics(path, header, headers)
     tic = matches[0] if len(matches) == 1 else None

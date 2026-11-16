@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QDoubleSpin
 
 from . import settings
 from .aia import aia_fingerprint, is_aia, load_aia_cached
-from .csv_exports import csv_fingerprint, is_csv, load_csv_cached
+from .csv_exports import cached_csv_info, csv_companion_aliases, csv_display_name, csv_fingerprint, is_csv, load_csv_cached
 from .reaction_collections import create_collection, load_collection
 from .deconvolution import SPECIES_COLORS, deconvolute_histograms
 from .deconvolution_dialog import DeconvolutionDialog
@@ -89,20 +89,29 @@ def cache_metadata(source):
     return json.dumps({"path": str(source)})
 
 
+class CachedMeasurements(dict):
+    def __init__(self):
+        super().__init__()
+        self.csv_metadata = {}
+
+
 def discover_cached_measurements(folder):
-    entries = {}
+    entries = CachedMeasurements()
     if folder is None or not folder.is_dir():
         return entries
     for cache in folder.glob("*.bluelcms.npz"):
         try:
             with np.load(cache, allow_pickle=False) as data:
                 metadata = json.loads(str(data["source_metadata"])) if "source_metadata" in data and str(data["source_metadata"]) else {}
+                spectra = json.loads(str(data["exported_spectra_metadata"])) if "exported_spectra_metadata" in data else []
             if metadata.get("vendor"):
                 source = VendorMeasurement(MeasurementKey(metadata["date"], metadata["sample"], metadata["replicate"]),
                                            Path(metadata["agilent"]), Path(metadata["positive"]), Path(metadata["negative"]))
             else:
                 source = Path(metadata["path"]) if "path" in metadata else cache
             entries[source] = cache
+            if is_csv(source):
+                entries.csv_metadata[source] = cached_csv_info(metadata, spectra)
         except (OSError, ValueError, KeyError):
             continue
     for cache in folder.iterdir():
@@ -366,6 +375,8 @@ class MainWindow(QMainWindow):
         self.creating_reaction_collection = False
         self.discovered_measurements = {}
         self.cached_measurements = {}
+        self.csv_metadata = {}
+        self.csv_companions = {}
         self.background_discovery = False
         self.pending_discoveries = 0
         self.source_refresh_timer = QTimer(self)
@@ -384,6 +395,7 @@ class MainWindow(QMainWindow):
         self.external_requests = []
         self.pending_view_request = None
         self.last_uv_bounds = None
+        self.last_exported_interval_signature = None
         self.closing = False
         self.source_history = {}
         self.new_measurements = set()
@@ -867,7 +879,14 @@ class MainWindow(QMainWindow):
         for index in range(self.files.count()):
             item = self.files.item(index)
             source = item.data(Qt.ItemDataRole.UserRole)
-            item.setText(vendor_display_name(source, show) if isinstance(source, VendorMeasurement) else file_display_name(source, show))
+            item.setText(self.measurement_display_name(source))
+
+    def measurement_display_name(self, source):
+        if isinstance(source, VendorMeasurement):
+            return vendor_display_name(source, settings.show_date_prefix())
+        if is_csv(source) and source in self.csv_metadata:
+            return file_display_name(Path(csv_display_name(source, self.csv_metadata[source])), settings.show_date_prefix())
+        return file_display_name(source, settings.show_date_prefix())
 
     def set_show_tic(self, polarity, show):
         settings.set_show_tic(show, polarity)
@@ -1400,6 +1419,15 @@ class MainWindow(QMainWindow):
                 tooltip += "\n" + measurement_tooltip(path)
             else:
                 tooltip += f"\n{path}"
+                if is_csv(path) and path in self.csv_metadata:
+                    info = self.csv_metadata[path]
+                    item.setText(self.measurement_display_name(path))
+                    if info.get("paired_tic"):
+                        tooltip += f"\nMass spectrum CSV: {path}\nTIC CSV: {info['paired_tic']}"
+                    if info.get("raw_source"):
+                        tooltip += f"\nOriginal raw source: {info['raw_source']}"
+                    if info.get("kind") == "SPECTRUM - MS":
+                        tooltip += "\nFixed exported spectrum; selecting a different TIC interval does not re-extract scans."
             item.setToolTip(tooltip)
 
     def set_download_state(self, path, active):
@@ -1441,6 +1469,7 @@ class MainWindow(QMainWindow):
             return
         self.folder_label.setText(f"{len(self.folders)} measurement location{'s' if len(self.folders) != 1 else ''}")
         self.discovered_paths, self.discovered_measurements, self.discovery_errors = [], {}, []
+        self.csv_metadata = {}
         self.new_measurements = set()
         self.source_history = {folder: history for folder, history in self.source_history.items() if folder in self.folders}
         self.pending_discoveries = len(self.folders) * 2 + 1
@@ -1482,12 +1511,16 @@ class MainWindow(QMainWindow):
                 self.discovered_measurements.setdefault(source.key, source)
             else:
                 paths.add(source)
+        self.csv_companions = csv_companion_aliases(paths, self.csv_metadata)
+        paths.difference_update(self.csv_companions)
         existing = {self.files.item(index).data(Qt.ItemDataRole.UserRole): self.files.item(index) for index in range(self.files.count())}
+        canonical_selection = {self.csv_companions[source] for source, item in existing.items()
+                               if source in self.csv_companions and item.isSelected()}
         if self.background_discovery:
             available = paths | set(self.discovered_measurements.values())
             # A transient discovery error must not erase the current sidebar.
             if self.discovery_errors:
-                available.update(existing)
+                available.update(source for source in existing if source not in self.csv_companions)
             removed_selection = False
             previous_block = self.files.blockSignals(True)
             try:
@@ -1497,12 +1530,12 @@ class MainWindow(QMainWindow):
                         self.files.takeItem(self.files.row(item))
             finally:
                 self.files.blockSignals(previous_block)
-            if removed_selection:
+            if removed_selection and not canonical_selection:
                 self.select_files()
         for path in sorted(paths, key=lambda value: value.name.casefold()):
             if path in existing:
                 continue
-            item = MeasurementItem(file_display_name(path, settings.show_date_prefix())); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
+            item = MeasurementItem(self.measurement_display_name(path)); item.setData(Qt.ItemDataRole.UserRole, path); self.files.addItem(item)
         for measurement in sorted(self.discovered_measurements.values(), key=lambda value: value.key, reverse=True):
             if measurement in existing:
                 continue
@@ -1511,6 +1544,14 @@ class MainWindow(QMainWindow):
             item.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
             item.setToolTip(measurement_tooltip(measurement))
             self.files.addItem(item)
+        if canonical_selection:
+            blocked = self.files.blockSignals(True)
+            for index in range(self.files.count()):
+                item = self.files.item(index)
+                if item.data(Qt.ItemDataRole.UserRole) in canonical_selection:
+                    item.setSelected(True)
+            self.files.blockSignals(blocked)
+            self.select_files()
         self.refresh_cache_indicators()
         if self.external_requests:
             requests, self.external_requests = self.external_requests, []
@@ -1565,6 +1606,7 @@ class MainWindow(QMainWindow):
         if self.closing or token != self.folder_token: return
         if error: self.discovery_errors.append(error)
         else:
+            self.csv_metadata.update(getattr(paths, "csv_metadata", {}))
             if folder is not None:
                 found = set(paths or [])
                 if folder in self.source_history:
@@ -1578,6 +1620,8 @@ class MainWindow(QMainWindow):
     def caches_listed(self, token, entries, error):
         if self.closing or token != self.folder_token: return
         self.cached_measurements = entries or {}
+        for source, info in getattr(entries, "csv_metadata", {}).items():
+            self.csv_metadata.setdefault(source, info)
         if error: self.discovery_errors.append(error)
         # Older caches without source metadata can still be matched by filename.
         for source in self.discovered_paths:
@@ -1635,6 +1679,7 @@ class MainWindow(QMainWindow):
         path = Path(request.path)
         # A caller may also name an existing cache directly.
         path = next((source for source, cache in self.cached_measurements.items() if cache == path and isinstance(source, Path)), path)
+        path = self.csv_companions.get(path, path)
         cache = self.cache_for(path)
         cached = bool(cache and cache.is_file())
         if not source_available(path) and not cached:
@@ -1658,7 +1703,7 @@ class MainWindow(QMainWindow):
         self.session_sources.add(path)
         item = next((self.files.item(index) for index in range(self.files.count()) if self.files.item(index).data(Qt.ItemDataRole.UserRole) == path), None)
         if item is None:
-            item = MeasurementItem(file_display_name(path, settings.show_date_prefix()))
+            item = MeasurementItem(self.measurement_display_name(path))
             item.setData(Qt.ItemDataRole.UserRole, path)
             self.files.addItem(item)
         self.pending_view_request = (path, request)
@@ -1827,6 +1872,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Unable to load {name}: {error}")
             return
         selected = {item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()}
+        if is_csv(path) and run.source_metadata:
+            self.csv_metadata[path] = cached_csv_info(json.loads(run.source_metadata), [vars(s) for s in run.exported_spectra])
         if path in selected:
             self.xic_results = {key: points for key, points in self.xic_results.items() if key[0] != path}
             self.runs[path] = run
@@ -2269,6 +2316,7 @@ class MainWindow(QMainWindow):
     def draw_uv(self):
         self.update_mass_spectrum_visibility()
         self.update_chromatogram_controls()
+        self.uv.set_exported_intervals([])
         if self.mode.currentText() == "DAD heatmap":
             self.draw_dad_heatmap()
             self.update_integration_actions()
@@ -2310,6 +2358,7 @@ class MainWindow(QMainWindow):
         tic_by_polarity = {"+": {}, "-": {}}
         extracted = {mass: {"+": {}, "-": {}} for mass in enabled_xics}
         selected = [item.data(Qt.ItemDataRole.UserRole) for item in self.files.selectedItems()]
+        exported_intervals = []
         for index, path in enumerate(selected):
             if path in self.runs:
                 run = self.runs[path]
@@ -2319,13 +2368,23 @@ class MainWindow(QMainWindow):
                 values = np.asarray(self.stream_uv.get(path, []), dtype=float).reshape(-1, 3)
                 times, signal, used = values[:, 0], values[:, 1], values[:, 2]
                 tic = self.stream_tic.get(path, [])
-            name = path.name if isinstance(path, Path) else path.label
+            name = self.measurement_display_name(path)
             if path in self.runs and self.runs[path].chromatograms:
-                for channel_index, trace in enumerate(self.selected_chromatograms(self.runs[path])):
+                traces = self.selected_chromatograms(self.runs[path])
+                if any(trace.name == "TIC" for trace in traces):
+                    for spectrum in self.runs[path].exported_spectra:
+                        if spectrum.start_min is not None and spectrum.end_min is not None:
+                            text = f"Exported spectrum: {spectrum.start_min:.2f}–{spectrum.end_min:.2f} min"
+                            if spectrum.averaged_scans is not None:
+                                text += f" · {spectrum.averaged_scans} scans"
+                            if len(selected) > 1:
+                                text = name + " — " + text
+                            exported_intervals.append((spectrum.start_min, spectrum.end_min, text))
+                for channel_index, trace in enumerate(traces):
                     color = COLORS[(index + channel_index * max(1, len(selected))) % len(COLORS)]
                     style = (Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine)[channel_index % 3]
                     self.uv.plot(trace.times, trace.values, pen=pg.mkPen(color, width=2, style=style),
-                                 name=f"{name} — {trace.name}" + (f" ({trace.unit})" if trace.unit else ""))
+                                 name=f"{name} — {trace.name}" + (f" ({trace.unit})" if trace.unit and trace.name != "TIC" else ""))
                     all_times.extend((float(trace.times[0]), float(trace.times[-1])))
             if len(times): self.uv.plot(times, signal, pen=pg.mkPen(COLORS[index % len(COLORS)], width=2), name=name); all_times.extend(times)
             elif path in self.runs:
@@ -2361,7 +2420,17 @@ class MainWindow(QMainWindow):
         title = "UV / DAD" + "".join(f" + MS TIC ({polarity})" for polarity in ("+", "-") if polarity in enabled_polarities)
         if enabled_xics:
             title += " + extracted TIC"
-        if recorded_only:
+        visible_traces = [trace for run in self.runs.values() for trace in self.selected_chromatograms(run)]
+        tic_only = bool(visible_traces) and all(trace.name == "TIC" for trace in visible_traces) and not any(run.dad or run.scans for run in self.runs.values())
+        if tic_only:
+            self.uv.setLabel("left", "Total ion signal", units="")
+            title = "Total ion chromatogram (TIC) versus time"
+            if len(exported_intervals) == 1:
+                title += " — " + exported_intervals[0][2]
+            elif exported_intervals:
+                title += f" — {len(exported_intervals)} fixed exported spectrum intervals highlighted"
+            self.uv.setTitle(title)
+        elif recorded_only:
             units = {trace.unit for run in self.runs.values() for trace in self.selected_chromatograms(run)}
             unit = next(iter(units)) if len(units) == 1 else ""
             self.uv.setLabel("left", "Absorbance" if unit.casefold() == "mau" else "Signal", units=unit)
@@ -2373,8 +2442,16 @@ class MainWindow(QMainWindow):
             bounds = (min(all_times), max(all_times))
             self.uv.region.setBounds(bounds)
             region = (max(bounds[0], min(bounds[1], previous_region[0])), max(bounds[0], min(bounds[1], previous_region[1]))) if preserve_region else bounds
+            signature = (tuple(selected), tuple((a, b) for a, b, _ in exported_intervals))
+            if tic_only and len(exported_intervals) == 1 and signature != self.last_exported_interval_signature:
+                start, stop, _ = exported_intervals[0]
+                clipped = (max(bounds[0], start), min(bounds[1], stop))
+                if clipped[0] < clipped[1]:
+                    region = clipped
             self.uv.region.setRegion(region); self.uv.region.show(); self.uv.enableAutoRange()
             self.last_uv_bounds = bounds
+            self.last_exported_interval_signature = signature
+        self.uv.set_exported_intervals(exported_intervals)
         if loading:
             loading_overlay(self.uv, True)
 
