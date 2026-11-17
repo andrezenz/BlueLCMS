@@ -22,8 +22,24 @@ def test_thumbnailer_registration_writes_user_mime_and_thumbnailer_idempotently(
     assert "thumbnailer" in thumbnailer
     assert (data_home / "mime/packages/bluelcms.xml").read_text() == "<mime-info/>\n"
     assert len(calls) == 1
+    assert "env" in calls[0][1]
     assert not linux_integration.register_thumbnailer(data_home, (helper, mime))
     assert len(calls) == 1, "unchanged desktop registrations should not rebuild the MIME database"
+
+
+def test_mime_migration_uses_original_system_library_path(monkeypatch, tmp_path):
+    from bluelcms import system_environment
+    helper = tmp_path / "thumbnailer.py"; helper.write_text("pass\n")
+    mime = tmp_path / "mime.xml"; mime.write_text("<mime-info/>\n")
+    calls = []
+    monkeypatch.setattr(system_environment.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundled/_internal")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/custom/lib")
+    monkeypatch.setattr(linux_integration.shutil, "which", lambda name: "/usr/bin/update-mime-database")
+    monkeypatch.setattr(linux_integration.subprocess, "run", lambda *args, **kwargs: calls.append(kwargs))
+    assert linux_integration.register_thumbnailer(tmp_path / "data", (helper, mime))
+    assert calls[0]["env"]["LD_LIBRARY_PATH"] == "/custom/lib"
+    assert "LD_LIBRARY_PATH_ORIG" not in calls[0]["env"]
 
 
 def test_startup_migration_only_runs_on_linux(monkeypatch):

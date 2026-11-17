@@ -10,6 +10,8 @@ import subprocess
 import sys
 from urllib.parse import unquote, urlparse
 
+from .system_environment import system_environment
+
 
 def integration_assets():
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -92,7 +94,8 @@ def register_thumbnailer(data_home: Path | None = None, assets=None) -> bool:
     if changed:
         database = shutil.which("update-mime-database")
         if database:
-            subprocess.run([database, str(data_home / "mime")], check=True, capture_output=True, text=True)
+            subprocess.run([database, str(data_home / "mime")], check=True, capture_output=True, text=True,
+                           env=system_environment())
             stamp.write_text(mime_digest, encoding="ascii")
             clear_cached_thumbnail_failures()
     return changed

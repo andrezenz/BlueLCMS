@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact: BlueLCMS-linux-x86_64.tar.gz
           - os: macos-latest
             artifact: BlueLCMS-macos.dmg
@@ -59,6 +59,11 @@ jobs:
         run: cp packaging/runtime_hooks/stable.py runtime-hook.py
       - name: Build application
         run: python -m PyInstaller --noconfirm --windowed --name BlueLCMS ${{ runner.os == 'Windows' && '--icon packaging/windows/bluelcms.ico' || '' }} --hidden-import PySide6.QtDBus --collect-data psims --collect-data bluelcms --add-data "packaging/linux/bluelcms.svg${{ runner.os == 'Windows' && ';' || ':' }}." --add-data "packaging/linux/bluelcms-thumbnailer.py${{ runner.os == 'Windows' && ';' || ':' }}." --add-data "packaging/linux/bluelcms-mime.xml${{ runner.os == 'Windows' && ';' || ':' }}." --runtime-hook runtime-hook.py --paths src packaging/entrypoints/app.py
+      - name: Verify Linux glibc compatibility and startup
+        if: runner.os == 'Linux'
+        run: |
+          python packaging/check_glibc.py dist/BlueLCMS 2.35
+          QT_QPA_PLATFORM=offscreen dist/BlueLCMS/BlueLCMS --help
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: mkdir package && cp -R dist/BlueLCMS package/ && cp packaging/linux/BlueLCMS.desktop packaging/linux/install.sh packaging/linux/bluelcms.svg packaging/linux/bluelcms-thumbnailer.py packaging/linux/bluelcms-mime.xml package/ && tar -C package -czf dist/${{ matrix.artifact }} .

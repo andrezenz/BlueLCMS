@@ -59,6 +59,10 @@ newer version is available.
 
 On Linux, extract the release archive and run `sh install.sh` from the extracted
 directory to install the application and desktop entry under `~/.local`.
+Linux releases and the website bootstrap are built on Ubuntu 22.04 (glibc 2.35);
+the release build checks every bundled ELF binary for a newer glibc requirement
+and smoke-tests startup. System desktop-integration commands use the host's
+library search path rather than the frozen application's bundled libraries.
 
 Packaged applications display their exact build version in **About**. Source
 checkouts use their numbered tag when present, or show the declared development

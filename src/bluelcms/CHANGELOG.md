@@ -1,3 +1,8 @@
+## 1.0.3.dev9
+
+- Fixed Linux updates and desktop MIME registration inheriting the frozen application's bundled library search path when running system commands.
+- Pinned Linux application and bootstrap builds to Ubuntu 22.04 and added a bundle-wide glibc compatibility check and startup smoke test, preventing newer incompatible host-library requirements from entering releases.
+
 ## 1.0.3.dev8
 
 - Label imported TIC exports explicitly as total ion signal versus retention time and mark the fixed spectrum's exported time interval with a non-editable band and scan-count label.

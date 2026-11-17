@@ -11,6 +11,7 @@ from urllib.request import urlretrieve
 
 from . import releases
 from .bootstrap import platform_asset
+from .system_environment import system_environment
 
 
 def replace_application(source: Path, destination: Path) -> None:
@@ -39,7 +40,7 @@ def install_linux_package(extracted: Path, prefix: Path, home=None) -> None:
     installer = extracted / "install.sh"
     if not installer.is_file():
         raise RuntimeError("The Linux package is missing its install.sh integration script.")
-    environment = os.environ.copy()
+    environment = system_environment()
     environment["BLUELCMS_INSTALL_PREFIX"] = str(prefix)
     if home is not None:
         environment["HOME"] = str(home)

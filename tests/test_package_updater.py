@@ -1,5 +1,8 @@
 import io
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tarfile
 
 import pytest
@@ -53,6 +56,46 @@ def test_linux_package_requires_and_runs_integration_installer(monkeypatch, tmp_
     prefix = tmp_path / "prefix"
     package_updater.install_linux_package(extracted, prefix, tmp_path / "home")
     assert (extracted / "registered").read_text() == str(prefix)
+
+
+@pytest.mark.parametrize("original", [None, "", "/custom/system-libs"])
+def test_updater_restores_pyinstaller_library_path(monkeypatch, tmp_path, original):
+    from bluelcms import system_environment
+    extracted = tmp_path / "release"; extracted.mkdir()
+    (extracted / "install.sh").write_text("#!/bin/sh\nprintenv LD_LIBRARY_PATH > actual || :\n")
+    monkeypatch.setattr(system_environment.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundled/_internal")
+    if original is None:
+        monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+    else:
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", original)
+    package_updater.install_linux_package(extracted, tmp_path / "prefix")
+    assert (extracted / "actual").read_text().strip() == (original or "")
+    assert os.environ["LD_LIBRARY_PATH"] == "/bundled/_internal"
+
+
+@pytest.mark.parametrize("original", [None, "/custom/system-libs"])
+def test_target_installer_sanitizes_environment_for_old_updater(monkeypatch, tmp_path, original):
+    root = Path(__file__).parents[1]
+    release = tmp_path / "release"; release.mkdir()
+    (release / "BlueLCMS").mkdir()
+    (release / "BlueLCMS/BlueLCMS").write_text("application")
+    for name in ("BlueLCMS.desktop", "bluelcms.svg", "bluelcms-thumbnailer.py", "bluelcms-mime.xml"):
+        (release / name).write_text("test\n")
+    shutil.copy(root / "packaging/linux/install.sh", release / "install.sh")
+    bin_dir = tmp_path / "bin"; bin_dir.mkdir()
+    checker = bin_dir / "update-mime-database"
+    checker.write_text("#!/bin/sh\nprintf '%s' \"${LD_LIBRARY_PATH-unset}\" > \"$CHECK_OUTPUT\"\n")
+    checker.chmod(0o755)
+    env = os.environ.copy()
+    env.update(PATH=f"{bin_dir}:/usr/bin:/bin", LD_LIBRARY_PATH="/bundled/_internal",
+               _PYI_APPLICATION_HOME_DIR="/bundled/_internal", BLUELCMS_INSTALL_PREFIX=str(tmp_path / "prefix"),
+               CHECK_OUTPUT=str(tmp_path / "result"))
+    env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is not None:
+        env["LD_LIBRARY_PATH_ORIG"] = original
+    subprocess.run(["sh", str(release / "install.sh")], cwd=release, env=env, check=True, capture_output=True, text=True)
+    assert (tmp_path / "result").read_text() == (original if original is not None else "unset")
 
 
 def test_archive_cannot_write_outside_extraction_root(monkeypatch, tmp_path):

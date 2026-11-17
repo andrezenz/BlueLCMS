@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+# A previous frozen BlueLCMS may launch this script during an update. Restore
+# the original search path before running system tools. The original updater
+# itself may predate the Python-side environment fix.
+if [ "${LD_LIBRARY_PATH_ORIG+x}" = x ]; then
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORIG
+    export LD_LIBRARY_PATH
+    unset LD_LIBRARY_PATH_ORIG
+elif [ "${_PYI_APPLICATION_HOME_DIR+x}" = x ] || [ "${_MEIPASS2+x}" = x ]; then
+    unset LD_LIBRARY_PATH
+fi
+
 prefix="${BLUELCMS_INSTALL_PREFIX:-${HOME}/.local}"
 mkdir -p "${prefix}/bin" "${prefix}/share/applications" "${prefix}/share/icons/hicolor/scalable/apps" "${prefix}/share/thumbnailers" "${prefix}/share/mime/packages"
 rm -rf "${prefix}/share/BlueLCMS"
