@@ -1,3 +1,8 @@
+## 1.0.3.dev10
+
+- Fixed Linux packaging startup checks on Ubuntu 22.04 by installing Qt's EGL/OpenGL and X11 runtime dependencies before building the application and website bootstrap.
+- Documented the host graphics libraries required on minimal Linux installations while retaining the glibc compatibility and startup checks.
+
 ## 1.0.3.dev9
 
 - Fixed Linux updates and desktop MIME registration inheriting the frozen application's bundled library search path when running system commands.

@@ -63,6 +63,15 @@ Linux releases and the website bootstrap are built on Ubuntu 22.04 (glibc 2.35);
 the release build checks every bundled ELF binary for a newer glibc requirement
 and smoke-tests startup. System desktop-integration commands use the host's
 library search path rather than the frozen application's bundled libraries.
+The Linux package uses the host's graphics stack, including EGL/OpenGL. On a
+minimal Ubuntu 22.04 installation, install the Qt graphics runtime dependencies:
+
+```sh
+sudo apt-get install libegl1 libgl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
+```
+
+Desktop installations commonly already have these libraries. The CI build
+installs the same dependencies before packaging and runs the startup smoke test.
 
 Packaged applications display their exact build version in **About**. Source
 checkouts use their numbered tag when present, or show the declared development
